@@ -52,7 +52,7 @@ terraform
 /bin/
 /dist/
 .local.env
-terraform-provider-mssql
-terraform-provider-mssql.log
-terraform-provider-mssql.exe
+terraform-provider-sqlserver
+terraform-provider-sqlserver.log
+terraform-provider-sqlserver.exe
 /.devcontainer/

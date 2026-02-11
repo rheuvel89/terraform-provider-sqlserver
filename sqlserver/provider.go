@@ -9,8 +9,8 @@ import (
   "github.com/rs/zerolog/log"
   "io"
   "os"
-  "terraform-provider-mssql/mssql/model"
-  "terraform-provider-mssql/sql"
+  "terraform-provider-sqlserver/sqlserver/model"
+  "terraform-provider-sqlserver/sql"
   "time"
 )
 
@@ -20,7 +20,7 @@ type mssqlProvider struct {
 }
 
 const (
-  providerLogFile = "terraform-provider-mssql.log"
+  providerLogFile = "terraform-provider-sqlserver.log"
 )
 
 var (

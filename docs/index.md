@@ -47,4 +47,4 @@ resource "mssql_user" "example" {
 
 The following arguments are supported:
 
-* `debug` - (Optional) Either `false` or `true`. Defaults to `false`. If `true`, the provider will write a debug log to `terraform-provider-mssql.log`.
+* `debug` - (Optional) Either `false` or `true`. Defaults to `false`. If `true`, the provider will write a debug log to `terraform-provider-sqlserver.log`.

@@ -3,7 +3,7 @@ package sql
 import (
   "context"
   "database/sql"
-  "terraform-provider-mssql/mssql/model"
+  "terraform-provider-sqlserver/sqlserver/model"
   "strings"
 )
 

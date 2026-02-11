@@ -36,7 +36,7 @@ git clone git@github.com:rheuvel89/terraform-provider-sqlserver
 Enter the provider directory and build the provider
 
 ```shell
-cd terraform-provider-mssql
+cd terraform-provider-sqlserver
 make build
 ```
 

@@ -12,7 +12,7 @@ import (
 
 	"github.com/Azure/go-autorest/autorest/adal"
 	"github.com/Azure/go-autorest/autorest/azure"
-	"terraform-provider-mssql/mssql/model"
+	"terraform-provider-sqlserver/sqlserver/model"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/microsoft/go-mssqldb/azuread"

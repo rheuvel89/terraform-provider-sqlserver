@@ -1,4 +1,4 @@
-module terraform-provider-mssql
+module terraform-provider-sqlserver
 
 go 1.25
 
