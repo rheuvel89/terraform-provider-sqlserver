@@ -81,7 +81,7 @@ resource "azurerm_resource_group" "rg" {
 }
 
 # An Azure SQL Server
-resource "azurerm_mssql_server" "sql_server" {
+resource "azurerm_sqlserver_server" "sql_server" {
   name                = "${lower(local.prefix)}-sql-server"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -103,21 +103,21 @@ resource "azurerm_mssql_server" "sql_server" {
 
 resource "azuread_group_member" "sql" {
   group_object_id  = data.azuread_group.sql_servers.id
-  member_object_id = azurerm_mssql_server.sql_server.identity[0].principal_id
+  member_object_id = azurerm_sqlserver_server.sql_server.identity[0].principal_id
 }
 
-resource "azurerm_mssql_firewall_rule" "sql_server_fw_rule" {
+resource "azurerm_sqlserver_firewall_rule" "sql_server_fw_rule" {
   count            = length(var.local_ip_addresses)
   name             = "AllowIP ${count.index}"
-  server_id        = azurerm_mssql_server.sql_server.id
+  server_id        = azurerm_sqlserver_server.sql_server.id
   start_ip_address = var.local_ip_addresses[count.index]
   end_ip_address   = var.local_ip_addresses[count.index]
 }
 
 # The Azure SQL Database used in tests
-resource "azurerm_mssql_database" "db" {
+resource "azurerm_sqlserver_database" "db" {
   name      = "testdb"
-  server_id = azurerm_mssql_server.sql_server.id
+  server_id = azurerm_sqlserver_server.sql_server.id
   sku_name  = "Basic"
 }
 
@@ -131,20 +131,21 @@ resource "local_sensitive_file" "local_env" {
   file_permission      = "0600"
   content              = <<-EOT
                          export TF_ACC=1
-                         export MSSQL_USERNAME='${local.local_username}'
-                         export MSSQL_PASSWORD='${local.local_password}'
-                         export MSSQL_TENANT_ID='${var.tenant_id}'
-                         export MSSQL_CLIENT_ID='${azuread_service_principal.sa.client_id}'
-                         export MSSQL_CLIENT_SECRET='${azuread_service_principal_password.sa.value}'
-                         export TF_ACC_SQL_SERVER='${azurerm_mssql_server.sql_server.fully_qualified_domain_name}'
-                         export TF_ACC_AZURE_MSSQL_USERNAME='${azurerm_mssql_server.sql_server.administrator_login}'
-                         export TF_ACC_AZURE_MSSQL_PASSWORD='${azurerm_mssql_server.sql_server.administrator_login_password}'
+                         export TF_SQLSERVER_HOST='mssql'
+                         export TF_SQLSERVER_USERNAME='${local.local_username}'
+                         export TF_SQLSERVER_PASSWORD='${local.local_password}'
+                         export TF_SQLSERVER_TENANT_ID='${var.tenant_id}'
+                         export TF_SQLSERVER_CLIENT_ID='${azuread_service_principal.sa.client_id}'
+                         export TF_CLIENT_SECRET='${azuread_service_principal_password.sa.value}'
+                         export TF_ACC_SQL_SERVER='${azurerm_sqlserver_server.sql_server.fully_qualified_domain_name}'
+                         export TF_ACC_AZURE_TF_SQLSERVER_USERNAME='${azurerm_sqlserver_server.sql_server.administrator_login}'
+                         export TF_ACC_AZURE_TF_SQLSERVER_PASSWORD='${azurerm_sqlserver_server.sql_server.administrator_login_password}'
                          export TF_ACC_AZURE_USER_CLIENT_ID='${azuread_service_principal.user.client_id}'
                          export TF_ACC_AZURE_USER_CLIENT_USER='${azuread_service_principal.user.display_name}'
                          export TF_ACC_AZURE_USER_CLIENT_SECRET='${azuread_service_principal_password.user.value}'
                          # Configuration for fedauth which uses env vars via DefaultAzureCredential
-                         export AZURE_TENANT_ID='${var.tenant_id}'
-                         export AZURE_CLIENT_ID='${azuread_service_principal.sa.client_id}'
-                         export AZURE_CLIENT_SECRET='${azuread_service_principal_password.sa.value}'
+                         export TF_SQLSERVER_TENANT_ID='${var.tenant_id}'
+                         export TF_SQLSERVER_CLIENT_ID='${azuread_service_principal.sa.client_id}'
+                         export TF_SQLSERVER_CLIENT_SECRET='${azuread_service_principal_password.sa.value}'
                          EOT
 }

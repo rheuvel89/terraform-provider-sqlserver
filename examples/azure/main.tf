@@ -122,7 +122,7 @@ resource "azurerm_resource_group" "rg" {
 }
 
 # An Azure SQL Server
-resource "azurerm_mssql_server" "sql_server" {
+resource "azurerm_sqlserver_server" "sql_server" {
   name                = "${lower(local.prefix)}-sql-server"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -144,26 +144,26 @@ resource "azurerm_mssql_server" "sql_server" {
 
 resource "azuread_group_member" "sql" {
   group_object_id  = data.azuread_group.sql_servers.id
-  member_object_id = azurerm_mssql_server.sql_server.identity[0].principal_id
+  member_object_id = azurerm_sqlserver_server.sql_server.identity[0].principal_id
 }
 
-resource "azurerm_mssql_firewall_rule" "sql_server_fw_rule" {
+resource "azurerm_sqlserver_firewall_rule" "sql_server_fw_rule" {
   count            = length(var.local_ip_addresses)
   name             = "AllowIP ${count.index}"
-  server_id        = azurerm_mssql_server.sql_server.id
+  server_id        = azurerm_sqlserver_server.sql_server.id
   start_ip_address = var.local_ip_addresses[count.index]
   end_ip_address   = var.local_ip_addresses[count.index]
 }
 
 # The Azure SQL Database used in tests
-resource "azurerm_mssql_database" "db" {
+resource "azurerm_sqlserver_database" "db" {
   name      = "testdb"
-  server_id = azurerm_mssql_server.sql_server.id
+  server_id = azurerm_sqlserver_server.sql_server.id
   sku_name  = "Basic"
 }
 
 resource "time_sleep" "wait_15_seconds" {
-  depends_on = [azurerm_mssql_database.db]
+  depends_on = [azurerm_sqlserver_database.db]
 
   create_duration = "15s"
 }
@@ -181,12 +181,12 @@ resource "random_password" "server" {
   special = true
 }
 
-resource "mssql_login" "server" {
+resource "sqlserver_login" "server" {
   server {
-    host = azurerm_mssql_server.sql_server.fully_qualified_domain_name
+    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
     login {
-      username = azurerm_mssql_server.sql_server.administrator_login
-      password = azurerm_mssql_server.sql_server.administrator_login_password
+      username = azurerm_sqlserver_server.sql_server.administrator_login
+      password = azurerm_sqlserver_server.sql_server.administrator_login_password
     }
   }
   login_name = random_password.server.keepers.login_name
@@ -195,23 +195,23 @@ resource "mssql_login" "server" {
   depends_on = [time_sleep.wait_15_seconds]
 }
 
-resource "mssql_user" "server" {
+resource "sqlserver_user" "server" {
   server {
-    host = azurerm_mssql_server.sql_server.fully_qualified_domain_name
+    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
     login {
-      username = azurerm_mssql_server.sql_server.administrator_login
-      password = azurerm_mssql_server.sql_server.administrator_login_password
+      username = azurerm_sqlserver_server.sql_server.administrator_login
+      password = azurerm_sqlserver_server.sql_server.administrator_login_password
     }
   }
-  database   = azurerm_mssql_database.db.name
+  database   = azurerm_sqlserver_database.db.name
   username   = random_password.server.keepers.username
-  login_name = mssql_login.server.login_name
+  login_name = sqlserver_login.server.login_name
 }
 
 output "instance" {
   value = {
-    login_name = mssql_login.server.login_name,
-    password   = mssql_login.server.password
+    login_name = sqlserver_login.server.login_name,
+    password   = sqlserver_login.server.password
   }
   sensitive = true
 }
@@ -229,23 +229,23 @@ resource "random_password" "database" {
   special = true
 }
 
-resource "mssql_user" "database" {
+resource "sqlserver_user" "database" {
   server {
-    host = azurerm_mssql_server.sql_server.fully_qualified_domain_name
+    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
     login {
-      username = azurerm_mssql_server.sql_server.administrator_login
-      password = azurerm_mssql_server.sql_server.administrator_login_password
+      username = azurerm_sqlserver_server.sql_server.administrator_login
+      password = azurerm_sqlserver_server.sql_server.administrator_login_password
     }
   }
-  database = azurerm_mssql_database.db.name
+  database = azurerm_sqlserver_database.db.name
   username = "${local.prefix}-user"
   password = random_password.database.result
 }
 
 output "database" {
   value = {
-    username = mssql_user.database.username,
-    password = mssql_user.database.password
+    username = sqlserver_user.database.username,
+    password = sqlserver_user.database.password
   }
   sensitive = true
 }
@@ -255,16 +255,16 @@ output "database" {
 # Creates a login and user from Azure AD in the SQL Server
 #
 
-resource "mssql_user" "external" {
+resource "sqlserver_user" "external" {
   server {
-    host = azurerm_mssql_server.sql_server.fully_qualified_domain_name
+    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
     azure_login {
       tenant_id     = var.tenant_id
       client_id     = azuread_service_principal.sa.client_id
       client_secret = azuread_service_principal_password.sa.value
     }
   }
-  database = azurerm_mssql_database.db.name
+  database = azurerm_sqlserver_database.db.name
   username = azuread_service_principal.user.display_name
 }
 

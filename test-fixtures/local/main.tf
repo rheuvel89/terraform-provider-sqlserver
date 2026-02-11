@@ -31,7 +31,8 @@ resource "local_sensitive_file" "local_env" {
   file_permission      = "0600"
   content              = <<-EOT
                          export TF_ACC_LOCAL=1
-                         export MSSQL_USERNAME='${local.local_username}'
-                         export MSSQL_PASSWORD='${local.local_password}'
+                         export TF_SQLSERVER_HOST="localhost"
+                         export TF_SQLSERVER_USERNAME='${local.local_username}'
+                         export TF_SQLSERVER_PASSWORD='${local.local_password}'
                          EOT
 }

@@ -6,7 +6,7 @@ import (
 )
 
 type Provider interface {
-  GetConnector(prefix string, data *schema.ResourceData) (interface{}, error)
+  GetConnector(data *schema.ResourceData) (interface{}, error)
   ResourceLogger(resource, function string) zerolog.Logger
   DataSourceLogger(datasource, function string) zerolog.Logger
 }

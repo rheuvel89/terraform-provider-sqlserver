@@ -1,254 +1,306 @@
-package mssql
+package sqlserver
 
 import (
-  "context"
-  "github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-  "github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-  "github.com/pkg/errors"
-  "strings"
-  "terraform-provider-sqlserver/sqlserver/model"
+	"context"
+	"strings"
+	"terraform-provider-sqlserver/sqlserver/model"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/pkg/errors"
 )
 
-const loginNameProp = "login_name"
-const defaultDatabaseProp = "default_database"
-const defaultDatabaseDefault = "master"
-const defaultLanguageProp = "default_language"
-
 type LoginConnector interface {
-  CreateLogin(ctx context.Context, name, password, sid, defaultDatabase, defaultLanguage string) error
-  GetLogin(ctx context.Context, name string) (*model.Login, error)
-  UpdateLogin(ctx context.Context, name, password, defaultDatabase, defaultLanguage string) error
-  DeleteLogin(ctx context.Context, name string) error
+	CreateLogin(ctx context.Context, name string, password string, loginSourceType string) error
+	GetLogin(ctx context.Context, name string) (*model.Login, error)
+	UpdateLogin(ctx context.Context, name string, password string) error
+	DeleteLogin(ctx context.Context, name string) error
+}
+
+var LoginSourceTypes = []string{
+	"sql_login",
+	"external_login",
+}
+var ExternalLoginTypes = []string{
+	"user",
+	"group",
 }
 
 func resourceLogin() *schema.Resource {
-  return &schema.Resource{
-    CreateContext: resourceLoginCreate,
-    ReadContext:   resourceLoginRead,
-    UpdateContext: resourceLoginUpdate,
-    DeleteContext: resourceLoginDelete,
-    Importer: &schema.ResourceImporter{
-      StateContext: resourceLoginImport,
-    },
-    Schema: map[string]*schema.Schema{
-      serverProp: {
-        Type:         schema.TypeList,
-        MaxItems:     1,
-        Required:     true,
-        Elem: &schema.Resource{
-          Schema: getServerSchema(serverProp),
-        },
-      },
-      loginNameProp: {
-        Type:     schema.TypeString,
-        Required: true,
-        ForceNew: true,
-      },
-      passwordProp: {
-        Type:      schema.TypeString,
-        Required:  true,
-        Sensitive: true,
-      },
-      sidStrProp: {
-        Type:     schema.TypeString,
-        Optional: true,
-        ForceNew: true,
-        Computed: true,
-      },
-      defaultDatabaseProp: {
-        Type:     schema.TypeString,
-        Optional: true,
-        Default:  defaultDatabaseDefault,
-        DiffSuppressFunc: func(k, old, new string, data *schema.ResourceData) bool {
-          return (old == "" && new == defaultDatabaseDefault) || (old == defaultDatabaseDefault && new == "")
-        },
-      },
-      defaultLanguageProp: {
-        Type:     schema.TypeString,
-        Optional: true,
-        DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-          return (old == "" && new == "us_english") || (old == "us_english" && new == "")
-        },
-      },
-      principalIdProp: {
-        Type:     schema.TypeInt,
-        Computed: true,
-      },
-    },
-    Timeouts: &schema.ResourceTimeout{
-      Default: defaultTimeout,
-      Read: defaultTimeout,
-    },
-  }
+	return &schema.Resource{
+		CreateContext: resourceLoginCreate,
+		ReadContext:   resourceLoginRead,
+		UpdateContext: resourceLoginUpdate,
+		DeleteContext: resourceLoginDelete,
+		// Importer: &schema.ResourceImporter{
+		// 	StateContext: resourceLoginImport,
+		// },
+		Schema: map[string]*schema.Schema{
+			"sql_login": {
+				Type:         schema.TypeList,
+				MaxItems:     1,
+				Optional:     true,
+				ExactlyOneOf: LoginSourceTypes,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						loginNameProp: {
+							Type:     schema.TypeString,
+							Required: true,
+							ForceNew: true,
+						},
+						passwordProp: {
+							Type:      schema.TypeString,
+							Required:  true,
+							Sensitive: true,
+						},
+					},
+				},
+			},
+			"external_login": {
+				Type:         schema.TypeList,
+				MaxItems:     1,
+				Optional:     true,
+				ExactlyOneOf: LoginSourceTypes,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						loginNameProp: {
+							Type:     schema.TypeString,
+							Required: true,
+							ForceNew: true,
+						},
+						"external_login_type": {
+							Type:         schema.TypeString,
+							Optional:     true,
+							ForceNew:     true,
+							Default:      "user",
+							ExactlyOneOf: ExternalLoginTypes,
+						},
+					},
+				},
+			},
+			sidStrProp: {
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+				Computed: true,
+			},
+			principalIdProp: {
+				Type:     schema.TypeInt,
+				Computed: true,
+			},
+			"user": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+			"group": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+		},
+		Timeouts: &schema.ResourceTimeout{
+			Default: defaultTimeout,
+			Read:    defaultTimeout,
+		},
+	}
 }
 
 func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta interface{}) diag.Diagnostics {
-  logger := loggerFromMeta(meta, "login", "create")
-  logger.Debug().Msgf("Create %s", getLoginID(data))
+	logger := loggerFromMeta(meta, "login", "create")
+	logger.Debug().Msgf("Create %s", getLoginID(meta, data))
 
-  loginName := data.Get(loginNameProp).(string)
-  password := data.Get(passwordProp).(string)
-  sid := data.Get(sidStrProp).(string)
-  defaultDatabase := data.Get(defaultDatabaseProp).(string)
-  defaultLanguage := data.Get(defaultLanguageProp).(string)
+	// sid := data.Get(sidStrProp).(string)
 
-  connector, err := getLoginConnector(meta, data)
-  if err != nil {
-    return diag.FromErr(err)
-  }
+	connector, err := getLoginConnector(meta, data)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
-  if err = connector.CreateLogin(ctx, loginName, password, sid, defaultDatabase, defaultLanguage); err != nil {
-    return diag.FromErr(errors.Wrapf(err, "unable to create login [%s]", loginName))
-  }
+	if sqlLogin, hasSqlLogin := data.GetOk(LoginSourceTypeSQL); hasSqlLogin {
+		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
 
-  data.SetId(getLoginID(data))
+		loginName := sqlLogin[loginNameProp].(string)
+		password := sqlLogin[passwordProp].(string)
 
-  logger.Info().Msgf("created login [%s]", loginName)
+		if err = connector.CreateLogin(ctx, loginName, password, "SQL"); err != nil {
+			return diag.FromErr(errors.Wrapf(err, "unable to create login [%s]", loginName))
+		}
 
-  return resourceLoginRead(ctx, data, meta)
+		logger.Info().Msgf("created SQL login [%s]", loginName)
+	} else if externalLogin, hasExternalLogin := data.GetOk(LoginSourceTypeExternal); hasExternalLogin {
+		externalLogin := externalLogin.([]interface{})[0].(map[string]interface{})
+
+		loginName := externalLogin[loginNameProp].(string)
+
+		if err = connector.CreateLogin(ctx, loginName, "", "EXTERNAL"); err != nil {
+			return diag.FromErr(errors.Wrapf(err, "unable to create external login [%s]", loginName))
+		}
+
+		logger.Info().Msgf("created external login [%s]", loginName)
+	} else {
+		return diag.Errorf("either sql_login or external_login must be specified")
+	}
+
+	loginID := getLoginID(meta, data)
+	data.SetId(loginID)
+
+	return resourceLoginRead(ctx, data, meta)
 }
 
 func resourceLoginRead(ctx context.Context, data *schema.ResourceData, meta interface{}) diag.Diagnostics {
-  logger := loggerFromMeta(meta, "login", "read")
-  logger.Debug().Msgf("Read %s", getLoginID(data))
+	logger := loggerFromMeta(meta, "login", "read")
+	logger.Debug().Msgf("Read %s", getLoginID(meta, data))
 
-  loginName := data.Get(loginNameProp).(string)
+	var loginName string
+	if sqlLogin, hasSqlLogin := data.GetOk(LoginSourceTypeSQL); hasSqlLogin {
+		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
+		loginName = sqlLogin[loginNameProp].(string)
+	} else if externalLogin, hasExternalLogin := data.GetOk(LoginSourceTypeExternal); hasExternalLogin {
+		externalLogin := externalLogin.([]interface{})[0].(map[string]interface{})
+		loginName = externalLogin[loginNameProp].(string)
+	} else {
+		return diag.Errorf("either sql_login or external_login must be specified")
+	}
 
-  connector, err := getLoginConnector(meta, data)
-  if err != nil {
-    return diag.FromErr(err)
-  }
+	connector, err := getLoginConnector(meta, data)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
-  login, err := connector.GetLogin(ctx, loginName)
-  if err != nil {
-    return diag.FromErr(errors.Wrapf(err, "unable to read login [%s]", loginName))
-  }
-  if login == nil {
-    logger.Info().Msgf("No login found for [%s]", loginName)
-    data.SetId("")
-  } else {
-    if err = data.Set(principalIdProp, login.PrincipalID); err != nil {
-      return diag.FromErr(err)
-    }
-    if err = data.Set(sidStrProp, login.SIDStr); err != nil {
-      return diag.FromErr(err)
-    }
-    if err = data.Set(defaultDatabaseProp, login.DefaultDatabase); err != nil {
-      return diag.FromErr(err)
-    }
-    if err = data.Set(defaultLanguageProp, login.DefaultLanguage); err != nil {
-      return diag.FromErr(err)
-    }
-  }
+	login, err := connector.GetLogin(ctx, loginName)
+	if err != nil {
+		return diag.FromErr(errors.Wrapf(err, "unable to read login [%s]", loginName))
+	}
+	if login == nil {
+		logger.Info().Msgf("No login found for [%s]", loginName)
+		data.SetId("")
+	} else {
 
-  return nil
+		if err = data.Set(principalIdProp, login.PrincipalID); err != nil {
+			return diag.FromErr(err)
+		}
+		if err = data.Set(sidStrProp, login.SIDStr); err != nil {
+			return diag.FromErr(err)
+		}
+	}
+
+	return nil
 }
 
 func resourceLoginUpdate(ctx context.Context, data *schema.ResourceData, meta interface{}) diag.Diagnostics {
-  logger := loggerFromMeta(meta, "login", "update")
-  logger.Debug().Msgf("Update %s", data.Id())
+	logger := loggerFromMeta(meta, "login", "update")
+	logger.Debug().Msgf("Update %s", data.Id())
 
-  loginName := data.Get(loginNameProp).(string)
-  password := data.Get(passwordProp).(string)
-  defaultDatabase := data.Get(defaultDatabaseProp).(string)
-  defaultLanguage := data.Get(defaultLanguageProp).(string)
+	connector, err := getLoginConnector(meta, data)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
-  connector, err := getLoginConnector(meta, data)
-  if err != nil {
-    return diag.FromErr(err)
-  }
+	if sqlLogin, hasSqlLogin := data.GetOk(LoginSourceTypeSQL); hasSqlLogin {
+		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
 
-  if err = connector.UpdateLogin(ctx, loginName, password, defaultDatabase, defaultLanguage); err != nil {
-    return diag.FromErr(errors.Wrapf(err, "unable to update login [%s]", loginName))
-  }
+		loginName := sqlLogin[loginNameProp].(string)
+		password := sqlLogin[passwordProp].(string)
 
-  logger.Info().Msgf("updated login [%s]", loginName)
+		if err = connector.UpdateLogin(ctx, loginName, password); err != nil {
+			return diag.FromErr(errors.Wrapf(err, "unable to update login [%s]", loginName))
+		}
 
-  return resourceLoginRead(ctx, data, meta)
+		logger.Info().Msgf("updated SQL login [%s]", loginName)
+	} else if _, hasExternalLogin := data.GetOk(LoginSourceTypeExternal); hasExternalLogin {
+		panic("external login update is not supported")
+	} else {
+		return diag.Errorf("either sql_login or external_login must be specified")
+	}
+
+	return resourceLoginRead(ctx, data, meta)
 }
 
 func resourceLoginDelete(ctx context.Context, data *schema.ResourceData, meta interface{}) diag.Diagnostics {
-  logger := loggerFromMeta(meta, "login", "delete")
-  logger.Debug().Msgf("Delete %s", data.Id())
+	logger := loggerFromMeta(meta, "login", "delete")
+	logger.Debug().Msgf("Delete %s", data.Id())
 
-  loginName := data.Get(loginNameProp).(string)
+	var loginName string
+	if sqlLogin, hasSqlLogin := data.GetOk(LoginSourceTypeSQL); hasSqlLogin {
+		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
+		loginName = sqlLogin[loginNameProp].(string)
+	} else if externalLogin, hasExternalLogin := data.GetOk(LoginSourceTypeExternal); hasExternalLogin {
+		externalLogin := externalLogin.([]interface{})[0].(map[string]interface{})
+		loginName = externalLogin[loginNameProp].(string)
+	} else {
+		return diag.Errorf("either sql_login or external_login must be specified")
+	}
 
-  connector, err := getLoginConnector(meta, data)
-  if err != nil {
-    return diag.FromErr(err)
-  }
+	connector, err := getLoginConnector(meta, data)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
-  if err = connector.DeleteLogin(ctx, loginName); err != nil {
-    return diag.FromErr(errors.Wrapf(err, "unable to delete login [%s]", loginName))
-  }
+	if err = connector.DeleteLogin(ctx, loginName); err != nil {
+		return diag.FromErr(errors.Wrapf(err, "unable to delete login [%s]", loginName))
+	}
 
-  logger.Info().Msgf("deleted login [%s]", loginName)
+	logger.Info().Msgf("deleted login [%s]", loginName)
 
-  // d.SetId("") is automatically called assuming delete returns no errors, but it is added here for explicitness.
-  data.SetId("")
+	// d.SetId("") is automatically called assuming delete returns no errors, but it is added here for explicitness.
+	data.SetId("")
 
-  return nil
+	return nil
 }
 
 func resourceLoginImport(ctx context.Context, data *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
-  logger := loggerFromMeta(meta, "login", "import")
-  logger.Debug().Msgf("Import %s", data.Id())
+	logger := loggerFromMeta(meta, "login", "import")
+	logger.Debug().Msgf("Import %s", data.Id())
 
-  server, u, err := serverFromId(data.Id())
-  if err != nil {
-    return nil, err
-  }
-  if err = data.Set(serverProp, server); err != nil {
-    return nil, err
-  }
+	id := data.Id()
+	_, u, err := serverFromId(id)
+	if err != nil {
+		return nil, err
+	}
 
-  parts := strings.Split(u.Path, "/")
-  if len(parts) != 2 {
-    return nil, errors.New("invalid ID")
-  }
-  if err = data.Set(loginNameProp, parts[1]); err != nil {
-    return nil, err
-  }
+	parts := strings.FieldsFunc(u.Path, func(c rune) bool { return c == '/' })
+	if len(parts) != 2 {
+		return nil, errors.New("invalid ID")
+	}
+	loginName := parts[1]
+	if err = data.Set(loginNameProp, parts[1]); err != nil {
+		return nil, err
+	}
 
-  data.SetId(getLoginID(data))
+	data.SetId(getLoginID(meta, data))
 
-  loginName := data.Get(loginNameProp).(string)
+	//	loginName := data.Get(loginNameProp).(string)
 
-  connector, err := getLoginConnector(meta, data)
-  if err != nil {
-    return nil, err
-  }
+	connector, err := getLoginConnector(meta, data)
+	if err != nil {
+		return nil, err
+	}
 
-  login, err := connector.GetLogin(ctx, loginName)
-  if err != nil {
-    return nil, errors.Wrapf(err, "unable to read login [%s] for import", loginName)
-  }
+	login, err := connector.GetLogin(ctx, loginName)
+	if err != nil {
+		return nil, errors.Wrapf(err, "unable to read login [%s] for import", loginName)
+	}
 
-  if login == nil {
-    return nil, errors.Errorf("no login [%s] found for import", loginName)
-  }
+	if login == nil {
+		return nil, errors.Errorf("no login [%s] found for import", loginName)
+	}
 
-  if err = data.Set(principalIdProp, login.PrincipalID); err != nil {
-    return nil, err
-  }
-  if err = data.Set(sidStrProp, login.SIDStr); err != nil {
-    return nil, err
-  }
-  if err = data.Set(defaultDatabaseProp, login.DefaultDatabase); err != nil {
-    return nil, err
-  }
-  if err = data.Set(defaultLanguageProp, login.DefaultLanguage); err != nil {
-    return nil, err
-  }
+	if err = data.Set(principalIdProp, login.PrincipalID); err != nil {
+		return nil, err
+	}
+	if err = data.Set(sidStrProp, login.SIDStr); err != nil {
+		return nil, err
+	}
 
-  return []*schema.ResourceData{data}, nil
+	return []*schema.ResourceData{data}, nil
 }
 
 func getLoginConnector(meta interface{}, data *schema.ResourceData) (LoginConnector, error) {
-  provider := meta.(model.Provider)
-  connector, err := provider.GetConnector(serverProp, data)
-  if err != nil {
-    return nil, err
-  }
-  return connector.(LoginConnector), nil
+	provider := meta.(model.Provider)
+	connector, err := provider.GetConnector(data)
+	if err != nil {
+		return nil, err
+	}
+	return connector.(LoginConnector), nil
 }

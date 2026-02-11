@@ -18,7 +18,7 @@ provider "mssql" {
   debug = "false"
 }
 
-resource "mssql_login" "example" {
+resource "sqlserver_login" "example" {
   server {
     host = "localhost"
     login {
@@ -30,7 +30,7 @@ resource "mssql_login" "example" {
   password   = "NotSoS3cret?"
 }
 
-resource "mssql_user" "example" {
+resource "sqlserver_user" "example" {
   server {
     host = "localhost"
     login {
@@ -39,7 +39,7 @@ resource "mssql_user" "example" {
     }
   }
   username   = "testuser"
-  login_name = mssql_login.example.login_name
+  login_name = sqlserver_login.example.login_name
 }
 ```
 

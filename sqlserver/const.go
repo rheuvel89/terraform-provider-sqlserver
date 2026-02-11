@@ -1,16 +1,18 @@
-package mssql
+package sqlserver
 
 const (
-  serverProp               = "server"
-  databaseProp             = "database"
-  principalIdProp          = "principal_id"
-  usernameProp             = "username"
-  objectIdProp             = "object_id"
-  passwordProp             = "password"
-  sidStrProp               = "sid"
-  clientIdProp             = "client_id"
-  authenticationTypeProp   = "authentication_type"
-  defaultSchemaProp        = "default_schema"
-  defaultSchemaPropDefault = "dbo"
-  rolesProp                = "roles"
+	databaseProp             = "database"
+	principalIdProp          = "principal_id"
+	usernameProp             = "username"
+	loginNameProp            = "login_name"
+	objectIdProp             = "object_id"
+	passwordProp             = "password"
+	sidStrProp               = "sid"
+	clientIdProp             = "client_id"
+	loginSourceTypeProp      = "login_source_type"
+	authenticationTypeProp   = "authentication_type"
+	rolesProp                = "roles"
+
+	LoginSourceTypeSQL      = "sql_login"
+	LoginSourceTypeExternal = "external_login"
 )

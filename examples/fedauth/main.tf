@@ -82,7 +82,7 @@ resource "azurerm_resource_group" "rg" {
 }
 
 # An Azure SQL Server
-resource "azurerm_mssql_server" "sql_server" {
+resource "azurerm_sqlserver_server" "sql_server" {
   name                = "${lower(local.prefix)}-sql-server"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -100,23 +100,23 @@ resource "azurerm_mssql_server" "sql_server" {
   }
 }
 
-resource "azurerm_mssql_firewall_rule" "sql_server_fw_rule" {
+resource "azurerm_sqlserver_firewall_rule" "sql_server_fw_rule" {
   count            = length(var.local_ip_addresses)
   name             = "AllowIP ${count.index}"
-  server_id        = azurerm_mssql_server.sql_server.id
+  server_id        = azurerm_sqlserver_server.sql_server.id
   start_ip_address = var.local_ip_addresses[count.index]
   end_ip_address   = var.local_ip_addresses[count.index]
 }
 
 # The Azure SQL Database used in tests
-resource "azurerm_mssql_database" "db" {
+resource "azurerm_sqlserver_database" "db" {
   name      = "testdb"
-  server_id = azurerm_mssql_server.sql_server.id
+  server_id = azurerm_sqlserver_server.sql_server.id
   sku_name  = "Basic"
 }
 
 resource "time_sleep" "wait_15_seconds" {
-  depends_on = [azurerm_mssql_database.db]
+  depends_on = [azurerm_sqlserver_database.db]
 
   create_duration = "15s"
 }
@@ -125,11 +125,11 @@ resource "time_sleep" "wait_15_seconds" {
 # Creates a login and user from Azure AD in the SQL Server
 #
 
-resource "mssql_user" "external" {
+resource "sqlserver_user" "external" {
   server {
-    host = azurerm_mssql_server.sql_server.fully_qualified_domain_name
+    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
     azuread_default_chain_auth {}
   }
-  database = azurerm_mssql_database.db.name
+  database = azurerm_sqlserver_database.db.name
   username = "someone@foobar.onmicrosoft.com"
 }

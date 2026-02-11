@@ -65,7 +65,7 @@ resource "random_password" "example" {
   special = true
 }
 
-resource "mssql_login" "example" {
+resource "sqlserver_login" "example" {
   server {
     host = docker_container.mssql.network_data[0].ip_address
     login {
@@ -79,7 +79,7 @@ resource "mssql_login" "example" {
   depends_on = [time_sleep.wait_5_seconds]
 }
 
-resource "mssql_login" "example" {
+resource "sqlserver_login" "example" {
   server {
     host = docker_container.mssql.ip_address
     login {
@@ -94,7 +94,7 @@ resource "mssql_login" "example" {
   depends_on = [time_sleep.wait_5_seconds]
 }
 
-resource "mssql_user" "example" {
+resource "sqlserver_user" "example" {
   server {
     host = docker_container.mssql.network_data[0].ip_address
     login {
@@ -103,13 +103,13 @@ resource "mssql_user" "example" {
     }
   }
   username   = random_password.example.keepers.username
-  login_name = mssql_login.example.login_name
+  login_name = sqlserver_login.example.login_name
 }
 
 output "login" {
   value = {
-    login_name = mssql_login.example.login_name,
-    password   = mssql_login.example.password
+    login_name = sqlserver_login.example.login_name,
+    password   = sqlserver_login.example.password
   }
   sensitive = true
 }

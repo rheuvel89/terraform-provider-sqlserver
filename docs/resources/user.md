@@ -1,13 +1,13 @@
-# mssql_user
+# sqlserver_user
 
-The `mssql_user` resource creates and manages a user on a SQL Server database.
+The `sqlserver_user` resource creates and manages a user on a SQL Server database.
 
 ## Example Usage
 
 ### Basic usage
 
 ```hcl
-resource "mssql_user" "example" {
+resource "sqlserver_user" "example" {
   server {
     host = "example-sql-server.database.windows.net"
     azure_login {
@@ -36,7 +36,7 @@ resource "azurerm_user_assigned_identity" "example" {
   name = "my-sql-identity"
 }
 
-resource "mssql_user" "example" {
+resource "sqlserver_user" "example" {
   server {
     host = "example-sql-server.database.windows.net"
     azure_login {
@@ -79,15 +79,15 @@ The `server` block supports the following arguments:
 
 The `login` block supports the following arguments:
 
-* `username` - (Required) The username of the SQL Server login. Can also be sourced from the `MSSQL_USERNAME` environment variable.
-* `password` - (Required) The password of the SQL Server login. Can also be sourced from the `MSSQL_PASSWORD` environment variable.
+* `username` - (Required) The username of the SQL Server login. Can also be sourced from the `TF_SQLSERVER_USERNAME` environment variable.
+* `password` - (Required) The password of the SQL Server login. Can also be sourced from the `TF_SQLSERVER_PASSWORD` environment variable.
 * `object_id` - (Optional) The object id of the external username. Only used in azure_login auth context when AAD role delegation to sql server identity is not possible.
 
 The `azure_login` block supports the following arguments:
 
-* `tenant_id` - (Required) The tenant ID of the principal used to login to the SQL Server. Can also be sourced from the `MSSQL_TENANT_ID` environment variable.
-* `client_id` - (Required) The client ID of the principal used to login to the SQL Server. Can also be sourced from the `MSSQL_CLIENT_ID` environment variable.
-* `client_secret` - (Required) The client secret of the principal used to login to the SQL Server. Can also be sourced from the `MSSQL_CLIENT_SECRET` environment variable.
+* `tenant_id` - (Required) The tenant ID of the principal used to login to the SQL Server. Can also be sourced from the `TF_SQLSERVER_TENANT_ID` environment variable.
+* `client_id` - (Required) The client ID of the principal used to login to the SQL Server. Can also be sourced from the `TF_SQLSERVER_CLIENT_ID` environment variable.
+* `client_secret` - (Required) The client secret of the principal used to login to the SQL Server. Can also be sourced from the `TF_CLIENT_SECRET` environment variable.
 
 The `azuread_managed_identity_auth` block supports the following arguments:
 
@@ -105,13 +105,13 @@ The following attributes are exported:
 
 ## Import
 
-Before importing `mssql_user`, you must to configure the authentication to your sql server:
+Before importing `sqlserver_user`, you must to configure the authentication to your sql server:
 
-1. Using Azure AD authentication, you must set the following environment variables: `MSSQL_TENANT_ID`, `MSSQL_CLIENT_ID` and `MSSQL_CLIENT_SECRET`.
-2. Using SQL authentication, you must set the following environment variables: `MSSQL_USERNAME` and `MSSQL_PASSWORD`.
+1. Using Azure AD authentication, you must set the following environment variables: `TF_SQLSERVER_TENANT_ID`, `TF_SQLSERVER_CLIENT_ID` and `TF_CLIENT_SECRET`.
+2. Using SQL authentication, you must set the following environment variables: `TF_SQLSERVER_USERNAME` and `TF_SQLSERVER_PASSWORD`.
 
 After that you can import the SQL Server database user using the server URL and `login name`, e.g.
 
 ```shell
-terraform import mssql_user.example 'mssql://example-sql-server.database.windows.net/master/user@example.com'
+terraform import sqlserver_user.example 'mssql://example-sql-server.database.windows.net/master/user@example.com'
 ```
