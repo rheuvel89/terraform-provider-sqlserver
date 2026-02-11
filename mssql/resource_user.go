@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/betr-io/terraform-provider-mssql/mssql/model"
+	"terraform-provider-mssql/mssql/model"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/pkg/errors"

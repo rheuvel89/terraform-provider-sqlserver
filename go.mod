@@ -1,6 +1,6 @@
-module github.com/betr-io/terraform-provider-mssql
+module terraform-provider-mssql
 
-go 1.21
+go 1.25
 
 require (
 	github.com/Azure/go-autorest/autorest v0.11.29

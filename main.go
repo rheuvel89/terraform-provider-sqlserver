@@ -2,7 +2,7 @@ package main
 
 import (
   "github.com/hashicorp/terraform-plugin-sdk/v2/plugin"
-  "github.com/betr-io/terraform-provider-mssql/mssql"
+  "terraform-provider-mssql/mssql"
 )
 
 // These will be set by goreleaser to appropriate values for the compiled binary

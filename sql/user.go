@@ -3,7 +3,7 @@ package sql
 import (
   "context"
   "database/sql"
-  "github.com/betr-io/terraform-provider-mssql/mssql/model"
+  "terraform-provider-mssql/mssql/model"
   "strings"
 )
 

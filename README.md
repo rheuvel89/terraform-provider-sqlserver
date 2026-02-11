@@ -30,7 +30,7 @@ provider "mssql" {}
 Clone the repository
 
 ```shell
-git clone git@github.com:betr-io/terraform-provider-mssql
+git clone git@github.com:rheuvel89/terraform-provider-sqlserver
 ```
 
 Enter the provider directory and build the provider
