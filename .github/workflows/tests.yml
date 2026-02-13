@@ -29,5 +29,6 @@ jobs:
     - name: Run acceptance tests
       run: |
         make docker-start
+        sleep 10
         sh -c 'TESTARGS=-count=1 ./wait-for localhost:1433 -- make testacc-local'
         make docker-stop
