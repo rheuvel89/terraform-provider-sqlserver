@@ -9,9 +9,9 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.85"
     }
-    mssql = {
-      source  = "betr-io/mssql"
-      version = "~> 0.2"
+    sqlserver = {
+      source  = "rheuvel89/sqlserver"
+      version = "0.1.1"
     }
     random = {
       source  = "hashicorp/random"
@@ -30,8 +30,13 @@ provider "azurerm" {
   features {}
 }
 
-provider "mssql" {
-  debug = "true"
+provider "sqlserver" {
+  debug = true
+  host  = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
+  login {
+    username = azurerm_sqlserver_server.sql_server.administrator_login
+    password = azurerm_sqlserver_server.sql_server.administrator_login_password
+  }
 }
 
 provider "random" {}
@@ -182,13 +187,6 @@ resource "random_password" "server" {
 }
 
 resource "sqlserver_login" "server" {
-  server {
-    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
-    login {
-      username = azurerm_sqlserver_server.sql_server.administrator_login
-      password = azurerm_sqlserver_server.sql_server.administrator_login_password
-    }
-  }
   login_name = random_password.server.keepers.login_name
   password   = random_password.server.result
 
@@ -196,13 +194,6 @@ resource "sqlserver_login" "server" {
 }
 
 resource "sqlserver_user" "server" {
-  server {
-    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
-    login {
-      username = azurerm_sqlserver_server.sql_server.administrator_login
-      password = azurerm_sqlserver_server.sql_server.administrator_login_password
-    }
-  }
   database   = azurerm_sqlserver_database.db.name
   username   = random_password.server.keepers.username
   login_name = sqlserver_login.server.login_name
@@ -230,13 +221,6 @@ resource "random_password" "database" {
 }
 
 resource "sqlserver_user" "database" {
-  server {
-    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
-    login {
-      username = azurerm_sqlserver_server.sql_server.administrator_login
-      password = azurerm_sqlserver_server.sql_server.administrator_login_password
-    }
-  }
   database = azurerm_sqlserver_database.db.name
   username = "${local.prefix}-user"
   password = random_password.database.result
@@ -256,14 +240,6 @@ output "database" {
 #
 
 resource "sqlserver_user" "external" {
-  server {
-    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
-    azure_login {
-      tenant_id     = var.tenant_id
-      client_id     = azuread_service_principal.sa.client_id
-      client_secret = azuread_service_principal_password.sa.value
-    }
-  }
   database = azurerm_sqlserver_database.db.name
   username = azuread_service_principal.user.display_name
 }

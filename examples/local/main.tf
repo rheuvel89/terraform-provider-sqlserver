@@ -5,9 +5,9 @@ terraform {
       source  = "kreuzwerker/docker"
       version = "~> 3.0"
     }
-    mssql = {
-      source  = "betr-io/mssql"
-      version = "~> 0.2"
+    sqlserver = {
+      source  = "rheuvel89/sqlserver"
+      version = "0.1.1"
     }
     random = {
       source  = "hashicorp/random"
@@ -22,8 +22,13 @@ terraform {
 
 provider "docker" {}
 
-provider "mssql" {
+provider "sqlserver" {
   debug = true
+  host  = docker_container.mssql.network_data[0].ip_address
+  login {
+    username = local.local_username
+    password = local.local_password
+  }
 }
 
 provider "random" {}
@@ -66,13 +71,6 @@ resource "random_password" "example" {
 }
 
 resource "sqlserver_login" "example" {
-  server {
-    host = docker_container.mssql.network_data[0].ip_address
-    login {
-      username = local.local_username
-      password = local.local_password
-    }
-  }
   login_name = random_password.example.keepers.login_name
   password   = random_password.example.result
 
@@ -80,13 +78,6 @@ resource "sqlserver_login" "example" {
 }
 
 resource "sqlserver_login" "example" {
-  server {
-    host = docker_container.mssql.ip_address
-    login {
-      username = local.local_username
-      password = local.local_password
-    }
-  }
   login_name = random_password.example.keepers.login_name
   password   = random_password.example.result
   sid        = "0xB7BDEF7990D03541BAA2AD73E4FF18E8"
@@ -95,13 +86,6 @@ resource "sqlserver_login" "example" {
 }
 
 resource "sqlserver_user" "example" {
-  server {
-    host = docker_container.mssql.network_data[0].ip_address
-    login {
-      username = local.local_username
-      password = local.local_password
-    }
-  }
   username   = random_password.example.keepers.username
   login_name = sqlserver_login.example.login_name
 }

@@ -9,9 +9,9 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.85"
     }
-    mssql = {
-      source  = "betr-io/mssql"
-      version = "~> 0.2"
+    sqlserver = {
+      source  = "rheuvel89/sqlserver"
+      version = "0.1.1"
     }
     random = {
       source  = "hashicorp/random"
@@ -30,8 +30,11 @@ provider "azurerm" {
   features {}
 }
 
-provider "mssql" {
-  debug = "true"
+
+provider "sqlserver" {  
+  debug = true
+  host  = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
+  azuread_default_chain_auth {}
 }
 
 provider "random" {}
@@ -126,10 +129,6 @@ resource "time_sleep" "wait_15_seconds" {
 #
 
 resource "sqlserver_user" "external" {
-  server {
-    host = azurerm_sqlserver_server.sql_server.fully_qualified_domain_name
-    azuread_default_chain_auth {}
-  }
   database = azurerm_sqlserver_database.db.name
   username = "someone@foobar.onmicrosoft.com"
 }

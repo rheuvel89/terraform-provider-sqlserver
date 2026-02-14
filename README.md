@@ -16,13 +16,20 @@ terraform {
   required_version = "~> 1.5"
   required_providers {
     sqlserver = {
-      versions = "~> 0.2"
-      source = "betr-io/mssql"
+      source  = "rheuvel89/sqlserver"
+      version = "0.1.1"
     }
   }
 }
 
-provider "mssql" {}
+provider "sqlserver" {
+  debug = true
+  host  = "localhost" # or your SQL Server host
+  login {
+    username = "sa"
+    password = "MySuperSecr3t!"
+  }
+}
 ```
 
 ## Building the provider
