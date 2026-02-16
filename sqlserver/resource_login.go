@@ -72,7 +72,7 @@ func resourceLogin() *schema.Resource {
 							Type:         schema.TypeString,
 							Optional:     true,
 							ForceNew:     true,
-							Default:      "user",
+							Default:      "external_login_type.user",
 							ExactlyOneOf: ExternalLoginTypes,
 						},
 					},
