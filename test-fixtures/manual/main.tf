@@ -16,3 +16,12 @@ resource "sqlserver_login" "test_login" {
       delete = "10m"
     }
 }
+
+resource "sqlserver_user" "test_user" {
+  database = "test"
+  login_name = "test-identity"
+  username = "test-identity"
+  roles = ["db_datareader", "db_datawriter"]
+  
+  depends_on = [ sqlserver_login.test_login ]
+}

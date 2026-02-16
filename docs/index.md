@@ -7,14 +7,14 @@ The SQL Server provider exposes resources used to manage the configuration of re
 ```hcl
 terraform {
   required_providers {
-    mssql = {
+    sqlserver = {
       source = "rheuvel89/sqlserver"
       version = "0.1.0"
     }
   }
 }
 
-provider "mssql" {
+provider "sqlserver" {
   debug = "false"
   host = "localhost"
   login {
