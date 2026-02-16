@@ -9,9 +9,9 @@ import (
 func (c *Connector) GetLogin(ctx context.Context, name string) (*model.Login, error) {
 	var login model.Login
 	err := c.QueryRowContext(ctx,
-		"SELECT principal_id, name, CONVERT(VARCHAR(1000), [sid], 1) FROM [master].[sys].[sql_logins] WHERE [name] = @name",
+		"SELECT p.[principal_id], p.[name], CONVERT(VARCHAR(1000), p.[sid], 1), p.[type_desc] FROM sys.server_principals p LEFT JOIN sys.sql_logins l ON p.principal_id = l.principal_id WHERE p.[name] = @name",
 		func(r *sql.Row) error {
-			result := r.Scan(&login.PrincipalID, &login.LoginName, &login.SIDStr)
+			result := r.Scan(&login.PrincipalID, &login.LoginName, &login.SIDStr, &login.SourceType)
 			return result
 		},
 		sql.Named("name", name),
@@ -27,7 +27,7 @@ func (c *Connector) GetLogin(ctx context.Context, name string) (*model.Login, er
 
 func (c *Connector) CreateLogin(ctx context.Context, name, password, sourceType string) error {
 	cmd := `DECLARE @sql nvarchar(max)
-          IF @sourceType = 'external'
+          IF @sourceType = 'EXTERNAL_GROUP' OR @sourceType = 'EXTERNAL_USER'
             BEGIN
               SET @sql = 'CREATE LOGIN ' + QuoteName(@name) + ' FROM EXTERNAL PROVIDER'
             END
@@ -61,7 +61,7 @@ func (c *Connector) DeleteLogin(ctx context.Context, name string) error {
 		return err
 	}
 	cmd := `DECLARE @sql nvarchar(max)
-          SET @sql = 'IF EXISTS (SELECT 1 FROM [master].[sys].[sql_logins] WHERE [name] = ' + QuoteName(@name, '''') + ') ' +
+          SET @sql = 'IF EXISTS (SELECT 1 FROM [master].[sys].[server_principals] WHERE [name] = ' + QuoteName(@name, '''') + ') ' +
                      'DROP LOGIN ' + QuoteName(@name)
           EXEC (@sql)`
 	return c.ExecContext(ctx, cmd, sql.Named("name", name))

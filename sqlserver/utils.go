@@ -12,9 +12,17 @@ func getLoginID(meta interface{}, data *schema.ResourceData) string {
 	host := provider.host
 	port := provider.port
 
-	login := data.Get("sql_login").([]interface{})
-	login0 := login[0].(map[string]interface{})
-	loginName := login0[loginNameProp].(string)
+	var loginName string
+	if sqlLoginInterface, ok := data.GetOk("sql_login"); ok {
+		sqlLogin := sqlLoginInterface.([]interface{})
+		login0 := sqlLogin[0].(map[string]interface{})
+		loginName = login0[loginNameProp].(string)
+	}
+	if externalLoginInterface, ok := data.GetOk("external_login"); ok {
+		externalLogin := externalLoginInterface.([]interface{})
+		login0 := externalLogin[0].(map[string]interface{})
+		loginName = login0[loginNameProp].(string)
+	}
 
 	loginID := fmt.Sprintf("sqlserver://%s:%s/login/%s", host, port, loginName)
 

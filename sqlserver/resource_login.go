@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/pkg/errors"
 )
 
@@ -72,19 +73,8 @@ func resourceLogin() *schema.Resource {
 							Type:         schema.TypeString,
 							Optional:     true,
 							ForceNew:     true,
-							Default:      "external_login_type.user",
-							ExactlyOneOf: ExternalLoginTypes,
-							
-						},
-						"user": {
-							Type:     schema.TypeBool,
-							Optional: true,
-							Default:  false,
-						},
-						"group": {
-							Type:     schema.TypeBool,
-							Optional: true,
-							Default:  false,
+							Default:      "user",
+							ValidateDiagFunc: validation.ToDiagFunc(validation.StringInSlice([]string{"user", "group"}, false)),
 						},
 					},
 				},
@@ -143,7 +133,17 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 
 		loginName := externalLogin[loginNameProp].(string)
 
-		if err = connector.CreateLogin(ctx, loginName, "", "EXTERNAL"); err != nil {
+		var sourceType string
+		switch externalLogin["external_login_type"].(string) {
+		case "user":
+			sourceType = "EXTERNAL_USER"
+		case "group":
+			sourceType = "EXTERNAL_GROUP"
+		default:
+			return diag.Errorf("invalid external login type [%s]", externalLogin["external_login_type"].(string))
+		}
+
+		if err = connector.CreateLogin(ctx, loginName, "", sourceType); err != nil {
 			logger.Debug().Msgf("Error: %s", err)
 			return diag.FromErr(errors.Wrapf(err, "unable to create external login [%s]", loginName))
 		}
