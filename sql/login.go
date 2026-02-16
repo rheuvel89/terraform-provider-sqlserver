@@ -11,7 +11,7 @@ func (c *Connector) GetLogin(ctx context.Context, name string) (*model.Login, er
 	err := c.QueryRowContext(ctx,
 		"SELECT principal_id, name, CONVERT(VARCHAR(1000), [sid], 1) FROM [master].[sys].[sql_logins] WHERE [name] = @name",
 		func(r *sql.Row) error {
-			result := r.Scan(&login.PrincipalID, &login.LoginName, &login.SIDStr, &login.SourceType)
+			result := r.Scan(&login.PrincipalID, &login.LoginName, &login.SIDStr)
 			return result
 		},
 		sql.Named("name", name),

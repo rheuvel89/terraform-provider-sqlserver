@@ -74,6 +74,17 @@ func resourceLogin() *schema.Resource {
 							ForceNew:     true,
 							Default:      "external_login_type.user",
 							ExactlyOneOf: ExternalLoginTypes,
+							
+						},
+						"user": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
+						"group": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
 						},
 					},
 				},
@@ -87,16 +98,6 @@ func resourceLogin() *schema.Resource {
 			principalIdProp: {
 				Type:     schema.TypeInt,
 				Computed: true,
-			},
-			"user": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Default:  false,
-			},
-			"group": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Default:  false,
 			},
 		},
 		Timeouts: &schema.ResourceTimeout{
