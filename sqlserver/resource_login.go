@@ -22,8 +22,8 @@ var LoginSourceTypes = []string{
 	"external_login",
 }
 var ExternalLoginTypes = []string{
-	"user",
-	"group",
+	"external_login.user",
+	"external_login.group",
 }
 
 func resourceLogin() *schema.Resource {
@@ -102,6 +102,9 @@ func resourceLogin() *schema.Resource {
 		Timeouts: &schema.ResourceTimeout{
 			Default: defaultTimeout,
 			Read:    defaultTimeout,
+			Create:  defaultTimeout,
+			Update:  defaultTimeout,
+			Delete:  defaultTimeout,
 		},
 	}
 }
@@ -111,6 +114,11 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 	logger.Debug().Msgf("Create %s", getLoginID(meta, data))
 
 	// sid := data.Get(sidStrProp).(string)
+
+	logger.Debug().Msgf("timeoutRead %s", data.Timeout(schema.TimeoutRead))
+	logger.Debug().Msgf("timeoutCreate %s", data.Timeout(schema.TimeoutCreate))
+	logger.Debug().Msgf("timeoutUpdate %s", data.Timeout(schema.TimeoutUpdate))
+	logger.Debug().Msgf("timeoutDelete %s", data.Timeout(schema.TimeoutDelete))
 
 	connector, err := getLoginConnector(meta, data)
 	if err != nil {
@@ -124,6 +132,7 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 		password := sqlLogin[passwordProp].(string)
 
 		if err = connector.CreateLogin(ctx, loginName, password, "SQL"); err != nil {
+			logger.Debug().Msgf("Error: %s", err)
 			return diag.FromErr(errors.Wrapf(err, "unable to create login [%s]", loginName))
 		}
 
@@ -134,6 +143,7 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 		loginName := externalLogin[loginNameProp].(string)
 
 		if err = connector.CreateLogin(ctx, loginName, "", "EXTERNAL"); err != nil {
+			logger.Debug().Msgf("Error: %s", err)
 			return diag.FromErr(errors.Wrapf(err, "unable to create external login [%s]", loginName))
 		}
 

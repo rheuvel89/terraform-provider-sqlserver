@@ -4,6 +4,7 @@ type Login struct {
   PrincipalID     int64
   LoginName       string
   SIDStr          string
+  SourceType      string
 }
 
 type SqlLogin struct {

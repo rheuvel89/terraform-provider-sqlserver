@@ -17,11 +17,11 @@ import (
 )
 
 type sqlserverProvider struct {
-    factory model.ConnectorFactory
-	logger    *zerolog.Logger
-	host 	string
-	port 	string
-	login interface{}
+	factory model.ConnectorFactory
+	logger  *zerolog.Logger
+	host    string
+	port    string
+	login   interface{}
 }
 
 const (
@@ -29,7 +29,7 @@ const (
 )
 
 var (
-	defaultTimeout = schema.DefaultTimeout(30 * time.Second)
+	defaultTimeout = schema.DefaultTimeout(10 * time.Minute)
 )
 
 func New(version, commit string) func() *schema.Provider {
@@ -156,7 +156,6 @@ func providerConfigure(ctx context.Context, data *schema.ResourceData, factory m
 	port := data.Get("port").(string)
 	logger := newLogger(isDebug)
 
-	
 	var login interface{}
 	if admin, ok := data.GetOk("login"); ok {
 		admin := admin.([]interface{})
@@ -184,7 +183,6 @@ func providerConfigure(ctx context.Context, data *schema.ResourceData, factory m
 			UserID: adminMap["user_id"].(string),
 		}
 	}
-
 
 	logger.Info().Msgf("Created provider with %s:%s", host, port)
 
