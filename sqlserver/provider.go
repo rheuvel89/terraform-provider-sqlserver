@@ -143,6 +143,9 @@ func Provider(factory model.ConnectorFactory) *schema.Provider {
 			"sqlserver_login": resourceLogin(),
 			"sqlserver_user":  resourceUser(),
 			"sqlserver_resource_governor": resourceResourceGovernor(),
+			"sqlserver_resource_pool": resourceResourceGovernorResourcePool(),
+			"sqlserver_workload_group": resourceResourceGovernorWorkloadGroup(),
+			"sqlserver_classifier_function": resourceResourceGovernorClassifierFunction(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{},
 		ConfigureContextFunc: func(ctx context.Context, data *schema.ResourceData) (interface{}, diag.Diagnostics) {
