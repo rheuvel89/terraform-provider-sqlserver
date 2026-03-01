@@ -20,6 +20,7 @@ import (
 var runLocalAccTests bool
 var testAccProvider *schema.Provider
 var testAccProviders map[string]func() (*schema.Provider, error)
+var testAccProviderFactories map[string]func() (*schema.Provider, error)
 
 func init() {
 	_, runLocalAccTests = os.LookupEnv("TF_ACC_LOCAL")
@@ -29,6 +30,7 @@ func init() {
 			return testAccProvider, nil
 		},
 	}
+	testAccProviderFactories = testAccProviders
 }
 
 func TestProvider(t *testing.T) {
