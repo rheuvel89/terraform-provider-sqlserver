@@ -43,7 +43,7 @@ func resourceClassifierFunction() *schema.Resource {
 				Required:    true,
 				Description: "The body of the classifier function. This should contain the logic that returns the workload group name (SYSNAME). Do not include CREATE FUNCTION or BEGIN/END - just the function body logic.",
 			},
-			objectIdProp: {
+			functionObjectIdProp: {
 				Type:        schema.TypeInt,
 				Computed:    true,
 				Description: "The object ID of the classifier function.",
@@ -114,7 +114,7 @@ func resourceClassifierFunctionRead(ctx context.Context, data *schema.ResourceDa
 	data.Set(classifierFunctionNameProp, fn.Name)
 	data.Set(schemaNameProp, fn.SchemaName)
 	// We don't update function_body from read since SQL Server may reformat it
-	data.Set(objectIdProp, fn.ObjectID)
+	data.Set(functionObjectIdProp, fn.ObjectID)
 	data.Set(fullyQualifiedNameProp, fmt.Sprintf("%s.%s", fn.SchemaName, fn.Name))
 
 	return nil

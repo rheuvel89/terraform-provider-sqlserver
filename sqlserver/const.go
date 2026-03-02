@@ -46,6 +46,6 @@ const (
 	classifierFunctionNameProp = "name"
 	schemaNameProp             = "schema_name"
 	functionBodyProp           = "function_body"
-	objectIdProp               = "object_id"
+	functionObjectIdProp       = "object_id"
 	fullyQualifiedNameProp     = "fully_qualified_name"
 )
