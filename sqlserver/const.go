@@ -41,4 +41,11 @@ const (
 	// Resource Governor properties
 	enabledProp            = "enabled"
 	classifierFunctionProp = "classifier_function"
+
+	// Classifier Function properties
+	classifierFunctionNameProp = "name"
+	schemaNameProp             = "schema_name"
+	functionBodyProp           = "function_body"
+	objectIdProp               = "object_id"
+	fullyQualifiedNameProp     = "fully_qualified_name"
 )

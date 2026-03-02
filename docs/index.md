@@ -66,6 +66,7 @@ The following resources are available:
 * [sqlserver_user](resources/user.md) - Manages database users
 * [sqlserver_resource_pool](resources/resource_pool.md) - Manages Resource Governor resource pools
 * [sqlserver_workload_group](resources/workload_group.md) - Manages Resource Governor workload groups
+* [sqlserver_classifier_function](resources/classifier_function.md) - Manages Resource Governor classifier functions
 * [sqlserver_resource_governor](resources/resource_governor.md) - Manages Resource Governor configuration
 
 ## Examples

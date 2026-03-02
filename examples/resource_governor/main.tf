@@ -122,21 +122,43 @@ resource "sqlserver_workload_group" "oltp_transactions" {
   group_max_requests               = 0  # unlimited
 }
 
-# Enable Resource Governor
-# Note: In production, you would also create a classifier function to route
-# sessions to the appropriate workload groups based on application name,
-# login name, or other criteria.
-resource "sqlserver_resource_governor" "config" {
-  enabled = true
-
-  # To use a classifier function, first create it in SQL Server, then reference it:
-  # classifier_function = "dbo.WorkloadClassifier"
+#
+# Classifier Function
+#
+# Routes incoming sessions to appropriate workload groups based on application name
+resource "sqlserver_classifier_function" "workload_classifier" {
+  name        = "WorkloadClassifier"
+  schema_name = "dbo"
+  function_body = <<-EOF
+    DECLARE @grp_name SYSNAME
+    DECLARE @app_name SYSNAME = APP_NAME()
+    
+    -- Route based on application name
+    IF @app_name LIKE 'Report%' OR @app_name LIKE '%SSRS%'
+        SET @grp_name = 'AdhocReports'
+    ELSE IF @app_name LIKE 'ETL%' OR @app_name LIKE 'SSIS%'
+        SET @grp_name = 'ScheduledReports'
+    ELSE IF @app_name LIKE 'App%' OR @app_name LIKE 'Web%'
+        SET @grp_name = 'OLTPTransactions'
+    ELSE
+        SET @grp_name = 'default'
+    
+    RETURN @grp_name
+EOF
 
   depends_on = [
     sqlserver_workload_group.adhoc_reports,
     sqlserver_workload_group.scheduled_reports,
     sqlserver_workload_group.oltp_transactions,
   ]
+}
+
+# Enable Resource Governor with the classifier function
+resource "sqlserver_resource_governor" "config" {
+  enabled             = true
+  classifier_function = sqlserver_classifier_function.workload_classifier.fully_qualified_name
+
+  depends_on = [sqlserver_classifier_function.workload_classifier]
 }
 
 #
