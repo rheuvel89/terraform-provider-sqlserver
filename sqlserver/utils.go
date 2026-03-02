@@ -3,6 +3,7 @@ package sqlserver
 import (
 	"fmt"
 	"terraform-provider-sqlserver/sqlserver/model"
+
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/rs/zerolog"
 )
@@ -34,7 +35,22 @@ func getUserID(meta interface{}, data *schema.ResourceData) string {
 	host := provider.host
 	port := provider.port
 	database := data.Get(databaseProp).(string)
-	username := data.Get(usernameProp).(string)
+
+	var username string
+	if instanceUserInterface, ok := data.GetOk(UserSourceTypeInstance); ok {
+		instanceUser := instanceUserInterface.([]interface{})
+		user0 := instanceUser[0].(map[string]interface{})
+		username = user0[usernameProp].(string)
+	} else if databaseUserInterface, ok := data.GetOk(UserSourceTypeDatabase); ok {
+		databaseUser := databaseUserInterface.([]interface{})
+		user0 := databaseUser[0].(map[string]interface{})
+		username = user0[usernameProp].(string)
+	} else if externalUserInterface, ok := data.GetOk(UserSourceTypeExternal); ok {
+		externalUser := externalUserInterface.([]interface{})
+		user0 := externalUser[0].(map[string]interface{})
+		username = user0[usernameProp].(string)
+	}
+
 	return fmt.Sprintf("sqlserver://%s:%s/%s/%s", host, port, database, username)
 }
 

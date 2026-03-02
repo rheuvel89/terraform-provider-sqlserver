@@ -10,6 +10,12 @@ import (
 	"github.com/pkg/errors"
 )
 
+var UserSourceTypes = []string{
+	UserSourceTypeInstance,
+	UserSourceTypeDatabase,
+	UserSourceTypeExternal,
+}
+
 func resourceUser() *schema.Resource {
 	return &schema.Resource{
 		CreateContext: resourceUserCreate,
@@ -26,26 +32,69 @@ func resourceUser() *schema.Resource {
 				ForceNew: true,
 				Default:  "master",
 			},
-			usernameProp: {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
+			UserSourceTypeInstance: {
+				Type:         schema.TypeList,
+				MaxItems:     1,
+				Optional:     true,
+				ForceNew:     true,
+				ExactlyOneOf: UserSourceTypes,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						usernameProp: {
+							Type:     schema.TypeString,
+							Required: true,
+							ForceNew: true,
+						},
+						loginNameProp: {
+							Type:     schema.TypeString,
+							Required: true,
+							ForceNew: true,
+						},
+					},
+				},
 			},
-			objectIdProp: {
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
+			UserSourceTypeDatabase: {
+				Type:         schema.TypeList,
+				MaxItems:     1,
+				Optional:     true,
+				ForceNew:     true,
+				ExactlyOneOf: UserSourceTypes,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						usernameProp: {
+							Type:     schema.TypeString,
+							Required: true,
+							ForceNew: true,
+						},
+						passwordProp: {
+							Type:      schema.TypeString,
+							Required:  true,
+							ForceNew:  true,
+							Sensitive: true,
+						},
+					},
+				},
 			},
-			loginNameProp: {
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
-			},
-			passwordProp: {
-				Type:      schema.TypeString,
-				Optional:  true,
-				ForceNew:  true,
-				Sensitive: true,
+			UserSourceTypeExternal: {
+				Type:         schema.TypeList,
+				MaxItems:     1,
+				Optional:     true,
+				ForceNew:     true,
+				ExactlyOneOf: UserSourceTypes,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						usernameProp: {
+							Type:     schema.TypeString,
+							Required: true,
+							ForceNew: true,
+						},
+						objectIdProp: {
+							Type:     schema.TypeString,
+							Optional: true,
+							ForceNew: true,
+						},
+					},
+				},
 			},
 			sidStrProp: {
 				Type:     schema.TypeString,
@@ -81,49 +130,90 @@ type UserConnector interface {
 	DeleteUser(ctx context.Context, database, username string) error
 }
 
+// getUsernameFromData extracts the username from the appropriate nested block
+func getUsernameFromData(data *schema.ResourceData) (string, string, error) {
+	if instanceUser, ok := data.GetOk(UserSourceTypeInstance); ok {
+		userData := instanceUser.([]interface{})[0].(map[string]interface{})
+		return userData[usernameProp].(string), "INSTANCE", nil
+	}
+	if databaseUser, ok := data.GetOk(UserSourceTypeDatabase); ok {
+		userData := databaseUser.([]interface{})[0].(map[string]interface{})
+		return userData[usernameProp].(string), "DATABASE", nil
+	}
+	if externalUser, ok := data.GetOk(UserSourceTypeExternal); ok {
+		userData := externalUser.([]interface{})[0].(map[string]interface{})
+		return userData[usernameProp].(string), "EXTERNAL", nil
+	}
+	return "", "", errors.New("one of instance_user, database_user, or external_user must be specified")
+}
+
 func resourceUserCreate(ctx context.Context, data *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	logger := loggerFromMeta(meta, "user", "create")
 	logger.Debug().Msgf("Create %s", getUserID(meta, data))
 
 	database := data.Get(databaseProp).(string)
-	username := data.Get(usernameProp).(string)
-	objectId := data.Get(objectIdProp).(string)
-	loginName := data.Get(loginNameProp).(string)
-	password := data.Get(passwordProp).(string)
 	roles := data.Get(rolesProp).(*schema.Set).List()
-
-	if loginName != "" && password != "" {
-		return diag.Errorf(loginNameProp + " and " + passwordProp + " cannot both be set")
-	}
-	var authType string
-	if loginName != "" {
-		authType = "INSTANCE"
-	} else if password != "" {
-		authType = "DATABASE"
-	} else {
-		authType = "EXTERNAL"
-	}
 
 	connector, err := getUserConnector(meta, data)
 	if err != nil {
 		return diag.FromErr(err)
 	}
 
-	user := &model.User{
-		Username:  username,
-		ObjectId:  objectId,
-		LoginName: loginName,
-		Password:  password,
-		AuthType:  authType,
-		Roles:     toStringSlice(roles),
+	var user *model.User
+
+	if instanceUser, hasInstanceUser := data.GetOk(UserSourceTypeInstance); hasInstanceUser {
+		userData := instanceUser.([]interface{})[0].(map[string]interface{})
+		username := userData[usernameProp].(string)
+		loginName := userData[loginNameProp].(string)
+
+		user = &model.User{
+			Username:  username,
+			LoginName: loginName,
+			AuthType:  "INSTANCE",
+			Roles:     toStringSlice(roles),
+		}
+
+		logger.Info().Msgf("creating instance user [%s].[%s] for login [%s]", database, username, loginName)
+	} else if databaseUser, hasDatabaseUser := data.GetOk(UserSourceTypeDatabase); hasDatabaseUser {
+		userData := databaseUser.([]interface{})[0].(map[string]interface{})
+		username := userData[usernameProp].(string)
+		password := userData[passwordProp].(string)
+
+		user = &model.User{
+			Username: username,
+			Password: password,
+			AuthType: "DATABASE",
+			Roles:    toStringSlice(roles),
+		}
+
+		logger.Info().Msgf("creating database user [%s].[%s]", database, username)
+	} else if externalUser, hasExternalUser := data.GetOk(UserSourceTypeExternal); hasExternalUser {
+		userData := externalUser.([]interface{})[0].(map[string]interface{})
+		username := userData[usernameProp].(string)
+		objectId := ""
+		if v, ok := userData[objectIdProp]; ok && v != nil {
+			objectId = v.(string)
+		}
+
+		user = &model.User{
+			Username: username,
+			ObjectId: objectId,
+			AuthType: "EXTERNAL",
+			Roles:    toStringSlice(roles),
+		}
+
+		logger.Info().Msgf("creating external user [%s].[%s]", database, username)
+	} else {
+		return diag.Errorf("one of instance_user, database_user, or external_user must be specified")
 	}
+
 	if err = connector.CreateUser(ctx, database, user); err != nil {
-		return diag.FromErr(errors.Wrapf(err, "unable to create user [%s].[%s]", database, username))
+		return diag.FromErr(errors.Wrapf(err, "unable to create user [%s].[%s]", database, user.Username))
 	}
 
 	data.SetId(getUserID(meta, data))
 
-	logger.Info().Msgf("created user [%s].[%s]", database, username)
+	logger.Info().Msgf("created user [%s].[%s]", database, user.Username)
 
 	return resourceUserRead(ctx, data, meta)
 }
@@ -133,7 +223,10 @@ func resourceUserRead(ctx context.Context, data *schema.ResourceData, meta inter
 	logger.Debug().Msgf("Read %s", data.Id())
 
 	database := data.Get(databaseProp).(string)
-	username := data.Get(usernameProp).(string)
+	username, _, err := getUsernameFromData(data)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
 	connector, err := getUserConnector(meta, data)
 	if err != nil {
@@ -148,9 +241,6 @@ func resourceUserRead(ctx context.Context, data *schema.ResourceData, meta inter
 		logger.Info().Msgf("No user found for [%s].[%s]", database, username)
 		data.SetId("")
 	} else {
-		if err = data.Set(loginNameProp, user.LoginName); err != nil {
-			return diag.FromErr(err)
-		}
 		if err = data.Set(sidStrProp, user.SIDStr); err != nil {
 			return diag.FromErr(err)
 		}
@@ -173,7 +263,10 @@ func resourceUserUpdate(ctx context.Context, data *schema.ResourceData, meta int
 	logger.Debug().Msgf("Update %s", data.Id())
 
 	database := data.Get(databaseProp).(string)
-	username := data.Get(usernameProp).(string)
+	username, _, err := getUsernameFromData(data)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 	roles := data.Get(rolesProp).(*schema.Set).List()
 
 	connector, err := getUserConnector(meta, data)
@@ -201,7 +294,10 @@ func resourceUserDelete(ctx context.Context, data *schema.ResourceData, meta int
 	logger.Debug().Msgf("Delete %s", data.Id())
 
 	database := data.Get(databaseProp).(string)
-	username := data.Get(usernameProp).(string)
+	username, _, err := getUsernameFromData(data)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
 	connector, err := getUserConnector(meta, data)
 	if err != nil {

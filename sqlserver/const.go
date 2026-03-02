@@ -16,6 +16,11 @@ const (
 	LoginSourceTypeSQL      = "sql_login"
 	LoginSourceTypeExternal = "external_login"
 
+	// User source types
+	UserSourceTypeInstance = "instance_user"
+	UserSourceTypeDatabase = "database_user"
+	UserSourceTypeExternal = "external_user"
+
 	// Resource Pool properties
 	resourcePoolNameProp    = "name"
 	resourcePoolNameRefProp = "resource_pool_name"
