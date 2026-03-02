@@ -15,7 +15,7 @@ terraform {
 }
 
 provider "sqlserver" {
-  debug = "false"
+  debug = false
   host = "localhost"
   login {
     username = "sa"
@@ -24,13 +24,16 @@ provider "sqlserver" {
 }
 
 resource "sqlserver_login" "example" {
-  login_name = "testlogin"
-  password   = "NotSoS3cret?"
+  sql_login {
+    login_name = "testlogin"
+    password   = "NotSoS3cret?"
+  }
 }
 
 resource "sqlserver_user" "example" {
+  database   = "master"
   username   = "testuser"
-  login_name = sqlserver_login.example.login_name
+  login_name = sqlserver_login.example.sql_login[0].login_name
 }
 ```
 
