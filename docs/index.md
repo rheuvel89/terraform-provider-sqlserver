@@ -15,7 +15,7 @@ terraform {
 }
 
 provider "sqlserver" {
-  debug = "false"
+  debug = false
   host = "localhost"
   login {
     username = "sa"
@@ -24,13 +24,16 @@ provider "sqlserver" {
 }
 
 resource "sqlserver_login" "example" {
-  login_name = "testlogin"
-  password   = "NotSoS3cret?"
+  sql_login {
+    login_name = "testlogin"
+    password   = "NotSoS3cret?"
+  }
 }
 
 resource "sqlserver_user" "example" {
+  database   = "master"
   username   = "testuser"
-  login_name = sqlserver_login.example.login_name
+  login_name = sqlserver_login.example.sql_login[0].login_name
 }
 ```
 
@@ -54,3 +57,23 @@ The following arguments are supported:
 * `azuread_default_chain_auth` - (Optional) Use Azure AD Default Credential Chain. Conflicts with other authentication blocks.
 * `azuread_managed_identity_auth` - (Optional) Use Azure AD Managed Identity authentication. Conflicts with other authentication blocks.
   * `user_id` - (Optional) The user-assigned managed identity client ID.
+
+## Resources
+
+The following resources are available:
+
+* [sqlserver_login](resources/login.md) - Manages SQL Server logins
+* [sqlserver_user](resources/user.md) - Manages database users
+* [sqlserver_resource_pool](resources/resource_pool.md) - Manages Resource Governor resource pools
+* [sqlserver_workload_group](resources/workload_group.md) - Manages Resource Governor workload groups
+* [sqlserver_classifier_function](resources/classifier_function.md) - Manages Resource Governor classifier functions
+* [sqlserver_resource_governor](resources/resource_governor.md) - Manages Resource Governor configuration
+
+## Examples
+
+Complete examples can be found in the `examples/` directory:
+
+* `examples/local/` - Local SQL Server in Docker with logins and users
+* `examples/azure/` - Azure SQL Database with Azure AD authentication
+* `examples/fedauth/` - Federated authentication examples
+* `examples/resource_governor/` - Resource Governor configuration with pools and workload groups

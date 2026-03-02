@@ -22,13 +22,13 @@ func TestAccUser_Local_Instance(t *testing.T) {
 					testAccCheckUserExists("sqlserver_user.instance"),
 					testAccCheckDatabaseUserWorks("sqlserver_user.instance", "user_instance", "valueIsH8kd$¡"),
 					resource.TestCheckResourceAttr("sqlserver_user.instance", "database", "master"),
-					resource.TestCheckResourceAttr("sqlserver_user.instance", "username", "instance"),
-					resource.TestCheckResourceAttr("sqlserver_user.instance", "login_name", "user_instance"),
+					resource.TestCheckResourceAttr("sqlserver_user.instance", "instance_user.0.username", "instance"),
+					resource.TestCheckResourceAttr("sqlserver_user.instance", "instance_user.0.login_name", "user_instance"),
 					resource.TestCheckResourceAttr("sqlserver_user.instance", "authentication_type", "INSTANCE"),
 					resource.TestCheckResourceAttr("sqlserver_user.instance", "roles.#", "1"),
 					resource.TestCheckResourceAttr("sqlserver_user.instance", "roles.0", "db_owner"),
 					resource.TestCheckResourceAttrSet("sqlserver_user.instance", "principal_id"),
-					resource.TestCheckNoResourceAttr("sqlserver_user.instance", "password"),
+					resource.TestCheckNoResourceAttr("sqlserver_user.instance", "database_user.#"),
 				),
 			},
 		},
@@ -62,13 +62,13 @@ func TestAccUser_Azure_Instance(t *testing.T) {
 					testAccCheckUserExists("sqlserver_user.instance"),
 					testAccCheckDatabaseUserWorks("sqlserver_user.instance", "user_instance", "valueIsH8kd$¡"),
 					resource.TestCheckResourceAttr("sqlserver_user.instance", "database", "testdb"),
-					resource.TestCheckResourceAttr("sqlserver_user.instance", "username", "instance"),
-					resource.TestCheckResourceAttr("sqlserver_user.instance", "login_name", "user_instance"),
+					resource.TestCheckResourceAttr("sqlserver_user.instance", "instance_user.0.username", "instance"),
+					resource.TestCheckResourceAttr("sqlserver_user.instance", "instance_user.0.login_name", "user_instance"),
 					resource.TestCheckResourceAttr("sqlserver_user.instance", "authentication_type", "INSTANCE"),
 					resource.TestCheckResourceAttr("sqlserver_user.instance", "roles.#", "1"),
 					resource.TestCheckResourceAttr("sqlserver_user.instance", "roles.0", "db_owner"),
 					resource.TestCheckResourceAttrSet("sqlserver_user.instance", "principal_id"),
-					resource.TestCheckNoResourceAttr("sqlserver_user.instance", "password"),
+					resource.TestCheckNoResourceAttr("sqlserver_user.instance", "database_user.#"),
 				),
 			},
 		},
@@ -87,9 +87,8 @@ func TestAccUser_Azure_Database(t *testing.T) {
 					testAccCheckUserExists("sqlserver_user.database"),
 					testAccCheckDatabaseUserWorks("sqlserver_user.database", "database_user", "valueIsH8kd$¡"),
 					resource.TestCheckResourceAttr("sqlserver_user.database", "database", "testdb"),
-					resource.TestCheckResourceAttr("sqlserver_user.database", "username", "database_user"),
-					resource.TestCheckResourceAttr("sqlserver_user.database", "password", "valueIsH8kd$¡"),
-					resource.TestCheckResourceAttr("sqlserver_user.database", "login_name", ""),
+					resource.TestCheckResourceAttr("sqlserver_user.database", "database_user.0.username", "database_user"),
+					resource.TestCheckResourceAttr("sqlserver_user.database", "database_user.0.password", "valueIsH8kd$¡"),
 					resource.TestCheckResourceAttr("sqlserver_user.database", "authentication_type", "DATABASE"),
 					resource.TestCheckResourceAttr("sqlserver_user.database", "roles.#", "1"),
 					resource.TestCheckResourceAttr("sqlserver_user.database", "roles.0", "db_owner"),
@@ -150,13 +149,12 @@ func TestAccUser_Azure_External(t *testing.T) {
 					testAccCheckUserExists("sqlserver_user.database"),
 					testAccCheckExternalUserWorks("sqlserver_user.database", tenantId, clientId, clientSecret),
 					resource.TestCheckResourceAttr("sqlserver_user.database", "database", "testdb"),
-					resource.TestCheckResourceAttr("sqlserver_user.database", "username", clientUser),
-					resource.TestCheckResourceAttr("sqlserver_user.database", "login_name", ""),
+					resource.TestCheckResourceAttr("sqlserver_user.database", "external_user.0.username", clientUser),
 					resource.TestCheckResourceAttr("sqlserver_user.database", "authentication_type", "EXTERNAL"),
 					resource.TestCheckResourceAttr("sqlserver_user.database", "roles.#", "1"),
 					resource.TestCheckResourceAttr("sqlserver_user.database", "roles.0", "db_owner"),
 					resource.TestCheckResourceAttrSet("sqlserver_user.database", "principal_id"),
-					resource.TestCheckNoResourceAttr("sqlserver_user.database", "password"),
+					resource.TestCheckNoResourceAttr("sqlserver_user.database", "database_user.#"),
 				),
 			},
 		},
@@ -305,9 +303,21 @@ func testAccCheckUser(t *testing.T, name string, login string, data map[string]i
            {{ end }}
            resource "sqlserver_user" "{{ .name }}" {
              {{ with .database }}database = "{{ . }}"{{ end }}
-             username = "{{ .username }}"
-             {{ with .password }}password = "{{ . }}"{{ end }}
-             {{ with .login_name }}login_name = "{{ . }}"{{ end }}
+             {{ if .login_name }}
+             instance_user {
+               username   = "{{ .username }}"
+               login_name = "{{ .login_name }}"
+             }
+             {{ else if .password }}
+             database_user {
+               username = "{{ .username }}"
+               password = "{{ .password }}"
+             }
+             {{ else }}
+             external_user {
+               username = "{{ .username }}"
+             }
+             {{ end }}
              {{ with .roles }}roles = {{ . }}{{ end }}
            }`
 	data["name"] = name
@@ -345,9 +355,21 @@ func testAccCheckMultipleUsers(t *testing.T, name string, login string, data map
              count = {{ .count }}
             
              {{ with .database }}database = "{{ . }}"{{ end }}
-             username = "{{ .username }}-${count.index}"
-             {{ with .password }}password = "{{ . }}"{{ end }}
-             {{ with .login_name }}login_name = "{{ . }}-${count.index}"{{ end }}
+             {{ if .login_name }}
+             instance_user {
+               username   = "{{ .username }}-${count.index}"
+               login_name = "{{ .login_name }}-${count.index}"
+             }
+             {{ else if .password }}
+             database_user {
+               username = "{{ .username }}-${count.index}"
+               password = "{{ .password }}"
+             }
+             {{ else }}
+             external_user {
+               username = "{{ .username }}-${count.index}"
+             }
+             {{ end }}
              {{ with .roles }}roles = {{ . }}{{ end }}
 			  depends_on = [{{ if .login_name }}sqlserver_login.{{ .name }}{{ end }}]
            }`
@@ -380,7 +402,7 @@ func testAccCheckUserDestroy(state *terraform.State) error {
 		}
 
 		database := rs.Primary.Attributes["database"]
-		username := rs.Primary.Attributes["username"]
+		username := getUsernameFromAttributes(rs.Primary.Attributes)
 		login, err := connector.GetUser(database, username)
 		if login != nil {
 			return fmt.Errorf("user still exists")
@@ -390,6 +412,20 @@ func testAccCheckUserDestroy(state *terraform.State) error {
 		}
 	}
 	return nil
+}
+
+// getUsernameFromAttributes extracts username from the nested user block in test attributes
+func getUsernameFromAttributes(attrs map[string]string) string {
+	if username, ok := attrs["instance_user.0.username"]; ok && username != "" {
+		return username
+	}
+	if username, ok := attrs["database_user.0.username"]; ok && username != "" {
+		return username
+	}
+	if username, ok := attrs["external_user.0.username"]; ok && username != "" {
+		return username
+	}
+	return ""
 }
 
 func testAccCheckUserExists(resource string, checks ...Check) resource.TestCheckFunc {
@@ -410,7 +446,7 @@ func testAccCheckUserExists(resource string, checks ...Check) resource.TestCheck
 		}
 
 		database := rs.Primary.Attributes["database"]
-		username := rs.Primary.Attributes["username"]
+		username := getUsernameFromAttributes(rs.Primary.Attributes)
 		user, err := connector.GetUser(database, username)
 		if user == nil {
 			return fmt.Errorf("user does not exist")
@@ -483,8 +519,9 @@ func testAccCheckDatabaseUserWorks(resource string, username, password string) r
 		if err != nil {
 			return fmt.Errorf("error: %s", err)
 		}
-		if current != rs.Primary.Attributes[usernameProp] {
-			return fmt.Errorf("expected to be user %s, got %s (%s)", rs.Primary.Attributes[usernameProp], current, system)
+		expectedUsername := getUsernameFromAttributes(rs.Primary.Attributes)
+		if current != expectedUsername {
+			return fmt.Errorf("expected to be user %s, got %s (%s)", expectedUsername, current, system)
 		}
 		return nil
 	}
@@ -510,8 +547,9 @@ func testAccCheckExternalUserWorks(resource string, tenantId, clientId, clientSe
 		if err != nil {
 			return fmt.Errorf("error: %s", err)
 		}
-		if current != rs.Primary.Attributes[usernameProp] {
-			return fmt.Errorf("expected to be user %s, got %s (%s)", rs.Primary.Attributes[usernameProp], current, system)
+		expectedUsername := getUsernameFromAttributes(rs.Primary.Attributes)
+		if current != expectedUsername {
+			return fmt.Errorf("expected to be user %s, got %s (%s)", expectedUsername, current, system)
 		}
 		return nil
 	}
@@ -524,13 +562,13 @@ func getMultipleUsersExistAccCheck(count int) []resource.TestCheckFunc {
 			testAccCheckUserExists(fmt.Sprintf("sqlserver_user.instance.%v", i)),
 			testAccCheckDatabaseUserWorks(fmt.Sprintf("sqlserver_user.instance.%v", i), fmt.Sprintf("user_instance-%v", i), "valueIsH8kd$¡"),
 			resource.TestCheckResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "database", "master"),
-			resource.TestCheckResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "username", fmt.Sprintf("instance-%v", i)),
-			resource.TestCheckResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "login_name", fmt.Sprintf("user_instance-%v", i)),
+			resource.TestCheckResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "instance_user.0.username", fmt.Sprintf("instance-%v", i)),
+			resource.TestCheckResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "instance_user.0.login_name", fmt.Sprintf("user_instance-%v", i)),
 			resource.TestCheckResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "authentication_type", "INSTANCE"),
 			resource.TestCheckResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "roles.#", "1"),
 			resource.TestCheckResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "roles.0", "db_owner"),
 			resource.TestCheckResourceAttrSet(fmt.Sprintf("sqlserver_user.instance.%v", i), "principal_id"),
-			resource.TestCheckNoResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "password"),
+			resource.TestCheckNoResourceAttr(fmt.Sprintf("sqlserver_user.instance.%v", i), "database_user.#"),
 		}...,
 		)
 	}
