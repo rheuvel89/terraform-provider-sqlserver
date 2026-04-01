@@ -75,11 +75,13 @@ func (c *Connector) CreateWorkloadGroup(ctx context.Context, group *model.Worklo
 }
 
 func (c *Connector) UpdateWorkloadGroup(ctx context.Context, group *model.WorkloadGroup) error {
-	if err := c.killWorkloadGroupSessions(ctx, group.Name); err != nil {
-		return err
-	}
-
-	cmd := fmt.Sprintf(`ALTER WORKLOAD GROUP %s WITH (
+	return c.withSessionDrainRetry(
+		ctx,
+		func(ctx context.Context) error {
+			return c.killWorkloadGroupSessions(ctx, group.Name)
+		},
+		func(ctx context.Context) error {
+			cmd := fmt.Sprintf(`ALTER WORKLOAD GROUP %s WITH (
 		IMPORTANCE = %s,
 		REQUEST_MAX_MEMORY_GRANT_PERCENT = %d,
 		REQUEST_MAX_CPU_TIME_SEC = %d,
@@ -87,35 +89,41 @@ func (c *Connector) UpdateWorkloadGroup(ctx context.Context, group *model.Worklo
 		MAX_DOP = %d,
 		GROUP_MAX_REQUESTS = %d
 	) USING %s`,
-		quoteName(group.Name),
-		group.Importance,
-		group.RequestMaxMemoryGrantPercent,
-		group.RequestMaxCPUTimeSec,
-		group.RequestMemoryGrantTimeoutSec,
-		group.MaxDOP,
-		group.GroupMaxRequests,
-		quoteName(group.PoolName),
+				quoteName(group.Name),
+				group.Importance,
+				group.RequestMaxMemoryGrantPercent,
+				group.RequestMaxCPUTimeSec,
+				group.RequestMemoryGrantTimeoutSec,
+				group.MaxDOP,
+				group.GroupMaxRequests,
+				quoteName(group.PoolName),
+			)
+
+			if err := c.ExecContext(ctx, cmd); err != nil {
+				return err
+			}
+
+			// Apply the configuration
+			return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
+		},
 	)
-
-	if err := c.ExecContext(ctx, cmd); err != nil {
-		return err
-	}
-
-	// Apply the configuration
-	return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
 }
 
 func (c *Connector) DeleteWorkloadGroup(ctx context.Context, name string) error {
-	if err := c.killWorkloadGroupSessions(ctx, name); err != nil {
-		return err
-	}
+	return c.withSessionDrainRetry(
+		ctx,
+		func(ctx context.Context) error {
+			return c.killWorkloadGroupSessions(ctx, name)
+		},
+		func(ctx context.Context) error {
+			cmd := fmt.Sprintf("DROP WORKLOAD GROUP %s", quoteName(name))
 
-	cmd := fmt.Sprintf("DROP WORKLOAD GROUP %s", quoteName(name))
+			if err := c.ExecContext(ctx, cmd); err != nil {
+				return err
+			}
 
-	if err := c.ExecContext(ctx, cmd); err != nil {
-		return err
-	}
-
-	// Apply the configuration
-	return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
+			// Apply the configuration
+			return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
+		},
+	)
 }

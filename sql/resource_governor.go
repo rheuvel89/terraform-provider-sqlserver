@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"terraform-provider-sqlserver/sqlserver/model"
+	"time"
 )
 
 const nonCurrentUserSessionsWhereClause = `s.is_user_process = 1 AND s.session_id <> @@SPID`
+
+const activeSessionsRetryableMessage = "there are active sessions in workload groups being dropped or moved to different resource pools"
 
 func (c *Connector) GetResourceGovernor(ctx context.Context) (*model.ResourceGovernor, error) {
 	var rg model.ResourceGovernor
@@ -48,65 +52,105 @@ func (c *Connector) GetResourceGovernor(ctx context.Context) (*model.ResourceGov
 }
 
 func (c *Connector) EnableResourceGovernor(ctx context.Context, classifierFunction string) error {
-	if err := c.killSessionsByWhereClause(ctx, nonCurrentUserSessionsWhereClause); err != nil {
-		return err
-	}
+	return c.withSessionDrainRetry(
+		ctx,
+		func(ctx context.Context) error {
+			return c.killSessionsByWhereClause(ctx, nonCurrentUserSessionsWhereClause)
+		},
+		func(ctx context.Context) error {
+			// Set classifier function if provided
+			if classifierFunction != "" {
+				cmd := fmt.Sprintf("ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = %s)", classifierFunction)
+				if err := c.ExecContext(ctx, cmd); err != nil {
+					return err
+				}
+			}
 
-	// Set classifier function if provided
-	if classifierFunction != "" {
-		cmd := fmt.Sprintf("ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = %s)", classifierFunction)
-		if err := c.ExecContext(ctx, cmd); err != nil {
-			return err
-		}
-	}
-
-	// Enable resource governor
-	if err := c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE"); err != nil {
-		return err
-	}
-
-	return nil
+			// Enable resource governor
+			return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
+		},
+	)
 }
 
 func (c *Connector) DisableResourceGovernor(ctx context.Context) error {
-	if err := c.killSessionsByWhereClause(ctx, nonCurrentUserSessionsWhereClause); err != nil {
-		return err
-	}
+	return c.withSessionDrainRetry(
+		ctx,
+		func(ctx context.Context) error {
+			return c.killSessionsByWhereClause(ctx, nonCurrentUserSessionsWhereClause)
+		},
+		func(ctx context.Context) error {
+			// Clear classifier function
+			if err := c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = NULL)"); err != nil {
+				return err
+			}
 
-	// Clear classifier function
-	if err := c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = NULL)"); err != nil {
-		return err
-	}
+			// Disable resource governor
+			return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR DISABLE")
+		},
+	)
+}
 
-	// Disable resource governor
-	if err := c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR DISABLE"); err != nil {
-		return err
+func (c *Connector) UpdateResourceGovernor(ctx context.Context, rg *model.ResourceGovernor) error {
+	return c.withSessionDrainRetry(
+		ctx,
+		func(ctx context.Context) error {
+			return c.killSessionsByWhereClause(ctx, nonCurrentUserSessionsWhereClause)
+		},
+		func(ctx context.Context) error {
+			// Set classifier function
+			var cmd string
+			if rg.ClassifierFunction != "" {
+				cmd = fmt.Sprintf("ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = %s)", rg.ClassifierFunction)
+			} else {
+				cmd = "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = NULL)"
+			}
+			if err := c.ExecContext(ctx, cmd); err != nil {
+				return err
+			}
+
+			// Enable or disable based on the flag
+			if rg.IsEnabled {
+				return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
+			}
+			return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR DISABLE")
+		},
+	)
+}
+
+func (c *Connector) withSessionDrainRetry(ctx context.Context, drainFn func(context.Context) error, operationFn func(context.Context) error) error {
+	const maxAttempts = 5
+	const retryDelay = 500 * time.Millisecond
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := drainFn(ctx); err != nil {
+			return err
+		}
+
+		err := operationFn(ctx)
+		if err == nil {
+			return nil
+		}
+
+		if !isRetryableActiveSessionsError(err) || attempt == maxAttempts {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryDelay):
+		}
 	}
 
 	return nil
 }
 
-func (c *Connector) UpdateResourceGovernor(ctx context.Context, rg *model.ResourceGovernor) error {
-	if err := c.killSessionsByWhereClause(ctx, nonCurrentUserSessionsWhereClause); err != nil {
-		return err
+func isRetryableActiveSessionsError(err error) bool {
+	if err == nil {
+		return false
 	}
 
-	// Set classifier function
-	var cmd string
-	if rg.ClassifierFunction != "" {
-		cmd = fmt.Sprintf("ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = %s)", rg.ClassifierFunction)
-	} else {
-		cmd = "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = NULL)"
-	}
-	if err := c.ExecContext(ctx, cmd); err != nil {
-		return err
-	}
-
-	// Enable or disable based on the flag
-	if rg.IsEnabled {
-		return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
-	}
-	return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR DISABLE")
+	return strings.Contains(strings.ToLower(err.Error()), activeSessionsRetryableMessage)
 }
 
 func (c *Connector) killSessionsByWhereClause(ctx context.Context, whereClause string, args ...interface{}) error {

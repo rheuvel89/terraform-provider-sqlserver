@@ -75,11 +75,13 @@ func (c *Connector) CreateResourcePool(ctx context.Context, pool *model.Resource
 }
 
 func (c *Connector) UpdateResourcePool(ctx context.Context, pool *model.ResourcePool) error {
-	if err := c.killResourcePoolSessions(ctx, pool.Name); err != nil {
-		return err
-	}
-
-	cmd := fmt.Sprintf(`ALTER RESOURCE POOL %s WITH (
+	return c.withSessionDrainRetry(
+		ctx,
+		func(ctx context.Context) error {
+			return c.killResourcePoolSessions(ctx, pool.Name)
+		},
+		func(ctx context.Context) error {
+			cmd := fmt.Sprintf(`ALTER RESOURCE POOL %s WITH (
 		MIN_CPU_PERCENT = %d,
 		MAX_CPU_PERCENT = %d,
 		MIN_MEMORY_PERCENT = %d,
@@ -88,37 +90,43 @@ func (c *Connector) UpdateResourcePool(ctx context.Context, pool *model.Resource
 		MIN_IOPS_PER_VOLUME = %d,
 		MAX_IOPS_PER_VOLUME = %d
 	)`,
-		quoteName(pool.Name),
-		pool.MinCPUPercent,
-		pool.MaxCPUPercent,
-		pool.MinMemoryPercent,
-		pool.MaxMemoryPercent,
-		pool.CapCPUPercent,
-		pool.MinIOPSPerVolume,
-		pool.MaxIOPSPerVolume,
+				quoteName(pool.Name),
+				pool.MinCPUPercent,
+				pool.MaxCPUPercent,
+				pool.MinMemoryPercent,
+				pool.MaxMemoryPercent,
+				pool.CapCPUPercent,
+				pool.MinIOPSPerVolume,
+				pool.MaxIOPSPerVolume,
+			)
+
+			if err := c.ExecContext(ctx, cmd); err != nil {
+				return err
+			}
+
+			// Apply the configuration
+			return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
+		},
 	)
-
-	if err := c.ExecContext(ctx, cmd); err != nil {
-		return err
-	}
-
-	// Apply the configuration
-	return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
 }
 
 func (c *Connector) DeleteResourcePool(ctx context.Context, name string) error {
-	if err := c.killResourcePoolSessions(ctx, name); err != nil {
-		return err
-	}
+	return c.withSessionDrainRetry(
+		ctx,
+		func(ctx context.Context) error {
+			return c.killResourcePoolSessions(ctx, name)
+		},
+		func(ctx context.Context) error {
+			cmd := fmt.Sprintf("DROP RESOURCE POOL %s", quoteName(name))
 
-	cmd := fmt.Sprintf("DROP RESOURCE POOL %s", quoteName(name))
+			if err := c.ExecContext(ctx, cmd); err != nil {
+				return err
+			}
 
-	if err := c.ExecContext(ctx, cmd); err != nil {
-		return err
-	}
-
-	// Apply the configuration
-	return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
+			// Apply the configuration
+			return c.ExecContext(ctx, "ALTER RESOURCE GOVERNOR RECONFIGURE")
+		},
+	)
 }
 
 // quoteName quotes a SQL Server identifier
