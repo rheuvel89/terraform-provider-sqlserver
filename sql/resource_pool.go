@@ -75,6 +75,10 @@ func (c *Connector) CreateResourcePool(ctx context.Context, pool *model.Resource
 }
 
 func (c *Connector) UpdateResourcePool(ctx context.Context, pool *model.ResourcePool) error {
+	if err := c.killResourcePoolSessions(ctx, pool.Name); err != nil {
+		return err
+	}
+
 	cmd := fmt.Sprintf(`ALTER RESOURCE POOL %s WITH (
 		MIN_CPU_PERCENT = %d,
 		MAX_CPU_PERCENT = %d,
@@ -103,6 +107,10 @@ func (c *Connector) UpdateResourcePool(ctx context.Context, pool *model.Resource
 }
 
 func (c *Connector) DeleteResourcePool(ctx context.Context, name string) error {
+	if err := c.killResourcePoolSessions(ctx, name); err != nil {
+		return err
+	}
+
 	cmd := fmt.Sprintf("DROP RESOURCE POOL %s", quoteName(name))
 
 	if err := c.ExecContext(ctx, cmd); err != nil {

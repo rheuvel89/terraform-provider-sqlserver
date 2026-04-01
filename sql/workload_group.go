@@ -75,6 +75,10 @@ func (c *Connector) CreateWorkloadGroup(ctx context.Context, group *model.Worklo
 }
 
 func (c *Connector) UpdateWorkloadGroup(ctx context.Context, group *model.WorkloadGroup) error {
+	if err := c.killWorkloadGroupSessions(ctx, group.Name); err != nil {
+		return err
+	}
+
 	cmd := fmt.Sprintf(`ALTER WORKLOAD GROUP %s WITH (
 		IMPORTANCE = %s,
 		REQUEST_MAX_MEMORY_GRANT_PERCENT = %d,
@@ -102,6 +106,10 @@ func (c *Connector) UpdateWorkloadGroup(ctx context.Context, group *model.Worklo
 }
 
 func (c *Connector) DeleteWorkloadGroup(ctx context.Context, name string) error {
+	if err := c.killWorkloadGroupSessions(ctx, name); err != nil {
+		return err
+	}
+
 	cmd := fmt.Sprintf("DROP WORKLOAD GROUP %s", quoteName(name))
 
 	if err := c.ExecContext(ctx, cmd); err != nil {
