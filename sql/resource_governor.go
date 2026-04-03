@@ -12,6 +12,7 @@ import (
 const nonCurrentUserSessionsWhereClause = `s.is_user_process = 1 AND s.session_id <> @@SPID`
 
 const activeSessionsRetryableMessage = "there are active sessions in workload groups being dropped or moved to different resource pools"
+const inactiveProcessIDMessage = "is not an active process id"
 
 func (c *Connector) GetResourceGovernor(ctx context.Context) (*model.ResourceGovernor, error) {
 	var rg model.ResourceGovernor
@@ -153,6 +154,15 @@ func isRetryableActiveSessionsError(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), activeSessionsRetryableMessage)
 }
 
+func isIgnorableInactiveProcessIDError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Session can disappear between SELECT and KILL; this is safe to ignore.
+	return strings.Contains(strings.ToLower(err.Error()), inactiveProcessIDMessage)
+}
+
 func (c *Connector) killSessionsByWhereClause(ctx context.Context, whereClause string, args ...interface{}) error {
 	query := fmt.Sprintf(`
 		SELECT s.session_id
@@ -176,6 +186,9 @@ func (c *Connector) killSessionsByWhereClause(ctx context.Context, whereClause s
 
 	for _, sessionID := range sessionIDs {
 		if err := c.ExecContext(ctx, fmt.Sprintf("KILL %d", sessionID)); err != nil {
+			if isIgnorableInactiveProcessIDError(err) {
+				continue
+			}
 			return err
 		}
 	}
