@@ -3,15 +3,25 @@ package sql
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"terraform-provider-sqlserver/sqlserver/model"
 )
 
 func (c *Connector) GetLogin(ctx context.Context, name string) (*model.Login, error) {
-	var login model.Login
+	var (
+		login model.Login
+		roles string
+	)
 	err := c.QueryRowContext(ctx,
-		"SELECT p.[principal_id], p.[name], CONVERT(VARCHAR(1000), p.[sid], 1), p.[type_desc] FROM sys.server_principals p LEFT JOIN sys.sql_logins l ON p.principal_id = l.principal_id WHERE p.[name] = @name",
+		`SELECT p.[principal_id], p.[name], CONVERT(VARCHAR(1000), p.[sid], 1), p.[type_desc], COALESCE(STRING_AGG(r.[name], ',') WITHIN GROUP (ORDER BY r.[name]), '')
+         FROM sys.server_principals p
+           LEFT JOIN sys.sql_logins l ON p.principal_id = l.principal_id
+           LEFT JOIN sys.server_role_members rm ON p.principal_id = rm.member_principal_id
+           LEFT JOIN sys.server_principals r ON rm.role_principal_id = r.principal_id AND r.[type] = 'R' AND r.[name] != 'public'
+         WHERE p.[name] = @name
+         GROUP BY p.[principal_id], p.[name], p.[sid], p.[type_desc]`,
 		func(r *sql.Row) error {
-			result := r.Scan(&login.PrincipalID, &login.LoginName, &login.SIDStr, &login.SourceType)
+			result := r.Scan(&login.PrincipalID, &login.LoginName, &login.SIDStr, &login.SourceType, &roles)
 			return result
 		},
 		sql.Named("name", name),
@@ -22,10 +32,15 @@ func (c *Connector) GetLogin(ctx context.Context, name string) (*model.Login, er
 		}
 		return nil, err
 	}
+	if roles == "" {
+		login.Roles = make([]string, 0)
+	} else {
+		login.Roles = strings.Split(roles, ",")
+	}
 	return &login, nil
 }
 
-func (c *Connector) CreateLogin(ctx context.Context, name, password, sourceType string) error {
+func (c *Connector) CreateLogin(ctx context.Context, name, password, sourceType string, roles []string) error {
 	cmd := `DECLARE @sql nvarchar(max)
           IF @sourceType = 'EXTERNAL_GROUP' OR @sourceType = 'EXTERNAL_USER'
             BEGIN
@@ -35,7 +50,24 @@ func (c *Connector) CreateLogin(ctx context.Context, name, password, sourceType 
             BEGIN
               SET @sql = 'CREATE LOGIN ' + QuoteName(@name) + ' ' + 'WITH PASSWORD = ' + QuoteName(@password, '''')
             END
-          EXEC (@sql)`
+          EXEC (@sql)
+
+          DECLARE role_cur CURSOR FAST_FORWARD FOR
+            SELECT [name] FROM sys.server_principals
+            WHERE [type] = 'R' AND [name] != 'public'
+              AND [name] COLLATE SQL_Latin1_General_CP1_CI_AS IN (SELECT value FROM STRING_SPLIT(@roles, ','))
+          DECLARE @role nvarchar(max)
+          DECLARE @roleSql nvarchar(max)
+          OPEN role_cur
+          FETCH NEXT FROM role_cur INTO @role
+          WHILE @@FETCH_STATUS = 0
+          BEGIN
+            SET @roleSql = 'ALTER SERVER ROLE ' + QuoteName(@role) + ' ADD MEMBER ' + QuoteName(@name)
+            EXEC (@roleSql)
+            FETCH NEXT FROM role_cur INTO @role
+          END
+          CLOSE role_cur
+          DEALLOCATE role_cur`
 
 	database := "master"
 	return c.
@@ -43,7 +75,8 @@ func (c *Connector) CreateLogin(ctx context.Context, name, password, sourceType 
 		ExecContext(ctx, cmd,
 			sql.Named("name", name),
 			sql.Named("password", password),
-			sql.Named("sourceType", sourceType))
+			sql.Named("sourceType", sourceType),
+			sql.Named("roles", strings.Join(roles, ",")))
 }
 
 func (c *Connector) UpdateLogin(ctx context.Context, name string, password string) error {
@@ -54,6 +87,58 @@ func (c *Connector) UpdateLogin(ctx context.Context, name string, password strin
 	return c.ExecContext(ctx, cmd,
 		sql.Named("name", name),
 		sql.Named("password", password))
+}
+
+func (c *Connector) UpdateLoginRoles(ctx context.Context, name string, roles []string) error {
+	cmd := `DECLARE @role_name nvarchar(max);
+          DECLARE @cmd nvarchar(max);
+
+          -- 1. Remove roles the login has but shouldn't
+          DECLARE del_role_cur CURSOR FAST_FORWARD FOR
+            SELECT r.[name]
+            FROM sys.server_role_members rm
+              JOIN sys.server_principals r ON rm.role_principal_id = r.principal_id
+              JOIN sys.server_principals m ON rm.member_principal_id = m.principal_id
+            WHERE m.[name] = @name
+              AND r.[name] != 'public'
+              AND r.[name] COLLATE SQL_Latin1_General_CP1_CI_AS NOT IN (SELECT value FROM STRING_SPLIT(@roles, ','))
+
+          OPEN del_role_cur
+          FETCH NEXT FROM del_role_cur INTO @role_name
+          WHILE @@FETCH_STATUS = 0
+          BEGIN
+            SET @cmd = 'ALTER SERVER ROLE ' + QuoteName(@role_name) + ' DROP MEMBER ' + QuoteName(@name)
+            EXEC (@cmd)
+            FETCH NEXT FROM del_role_cur INTO @role_name
+          END
+          CLOSE del_role_cur
+          DEALLOCATE del_role_cur
+
+          -- 2. Add roles the login needs but doesn't have
+          DECLARE add_role_cur CURSOR FAST_FORWARD FOR
+            SELECT [name] FROM sys.server_principals
+            WHERE [type] = 'R' AND [name] != 'public'
+              AND [name] NOT IN (
+                SELECT r.[name] FROM sys.server_role_members rm
+                  JOIN sys.server_principals r ON rm.role_principal_id = r.principal_id
+                  JOIN sys.server_principals m ON rm.member_principal_id = m.principal_id
+                WHERE m.[name] = @name
+              )
+              AND [name] COLLATE SQL_Latin1_General_CP1_CI_AS IN (SELECT value FROM STRING_SPLIT(@roles, ','))
+
+          OPEN add_role_cur
+          FETCH NEXT FROM add_role_cur INTO @role_name
+          WHILE @@FETCH_STATUS = 0
+          BEGIN
+            SET @cmd = 'ALTER SERVER ROLE ' + QuoteName(@role_name) + ' ADD MEMBER ' + QuoteName(@name)
+            EXEC (@cmd)
+            FETCH NEXT FROM add_role_cur INTO @role_name
+          END
+          CLOSE add_role_cur
+          DEALLOCATE add_role_cur`
+	return c.ExecContext(ctx, cmd,
+		sql.Named("name", name),
+		sql.Named("roles", strings.Join(roles, ",")))
 }
 
 func (c *Connector) DeleteLogin(ctx context.Context, name string) error {

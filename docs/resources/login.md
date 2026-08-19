@@ -12,6 +12,7 @@ resource "sqlserver_login" "example" {
     login_name = "testlogin"
     password   = "NotSoS3cret?"
   }
+  roles = ["dbcreator", "diskadmin"]
 }
 ```
 
@@ -35,6 +36,7 @@ resource "sqlserver_login" "external" {
   * `login_name` - (Required) The name of the external login.
   * `external_login_type` - (Optional) The type of external login. Valid values are `user` or `group`. Defaults to `user`.
 * `sid` - (Optional) The security identifier (SID) for the login. If not specified, SQL Server will generate one.
+* `roles` - (Optional) A set of fixed server roles (e.g. `sysadmin`, `dbcreator`, `securityadmin`) to assign to the login. The built-in `public` role is always assigned and cannot be managed through this attribute.
 
 ## Attribute Reference
 
