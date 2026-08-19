@@ -29,6 +29,61 @@ func TestAccLogin_Local_Basic(t *testing.T) {
 	})
 }
 
+func TestAccLogin_Local_Roles(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      func(state *terraform.State) error { return testAccCheckLoginDestroy(state) },
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCheckLogin(t, "roles", false, map[string]interface{}{"login_name": "login_roles", "password": "valueIsH8kd$¡", "roles": "[\"dbcreator\"]"}),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLoginExists("sqlserver_login.roles", Check{"roles", "==", []string{"dbcreator"}}),
+					testAccCheckLoginWorks("sqlserver_login.roles"),
+					resource.TestCheckResourceAttr("sqlserver_login.roles", "roles.#", "1"),
+					resource.TestCheckResourceAttr("sqlserver_login.roles", "roles.0", "dbcreator"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccLogin_Local_Update_Roles(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      func(state *terraform.State) error { return testAccCheckLoginDestroy(state) },
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCheckLogin(t, "update_roles", false, map[string]interface{}{"login_name": "login_update_roles", "password": "valueIsH8kd$¡"}),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("sqlserver_login.update_roles", "roles.#", "0"),
+					testAccCheckLoginExists("sqlserver_login.update_roles", Check{"roles", "==", []string{}}),
+					testAccCheckLoginWorks("sqlserver_login.update_roles"),
+				),
+			},
+			{
+				Config: testAccCheckLogin(t, "update_roles", false, map[string]interface{}{"login_name": "login_update_roles", "password": "valueIsH8kd$¡", "roles": "[\"dbcreator\",\"diskadmin\"]"}),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("sqlserver_login.update_roles", "roles.#", "2"),
+					testAccCheckLoginExists("sqlserver_login.update_roles", Check{"roles", "==", []string{"dbcreator", "diskadmin"}}),
+					testAccCheckLoginWorks("sqlserver_login.update_roles"),
+				),
+			},
+			{
+				Config: testAccCheckLogin(t, "update_roles", false, map[string]interface{}{"login_name": "login_update_roles", "password": "valueIsH8kd$¡", "roles": "[\"dbcreator\"]"}),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("sqlserver_login.update_roles", "roles.#", "1"),
+					testAccCheckLoginExists("sqlserver_login.update_roles", Check{"roles", "==", []string{"dbcreator"}}),
+					testAccCheckLoginWorks("sqlserver_login.update_roles"),
+				),
+			},
+		},
+	})
+}
+
 // func TestAccLogin_Local_Basic_SID(t *testing.T) {
 // 	resource.Test(t, resource.TestCase{
 // 		PreCheck:          func() { testAccPreCheck(t) },
@@ -208,6 +263,7 @@ func testAccCheckLogin(t *testing.T, name string, azure bool, data map[string]in
              password   = "{{ .password }}"
              }
              {{ with .sid }}sid = "{{ . }}"{{ end }}
+             {{ with .roles }}roles = {{ . }}{{ end }}
            }`
 	data["name"] = name
 	data["azure"] = azure
@@ -270,10 +326,16 @@ func testAccCheckLoginExists(resource string, checks ...Check) resource.TestChec
 
 		var actual interface{}
 		for _, check := range checks {
-			if (check.op == "" || check.op == "==") && check.expected != actual {
+			switch check.name {
+			case "roles":
+				actual = login.Roles
+			default:
+				return fmt.Errorf("unknown property %s", check.name)
+			}
+			if (check.op == "" || check.op == "==") && !equal(check.expected, actual) {
 				return fmt.Errorf("expected %s == %s, got %s", check.name, check.expected, actual)
 			}
-			if check.op == "!=" && check.expected == actual {
+			if check.op == "!=" && equal(check.expected, actual) {
 				return fmt.Errorf("expected %s != %s, got %s", check.name, check.expected, actual)
 			}
 		}

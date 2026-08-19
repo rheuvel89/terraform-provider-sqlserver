@@ -12,9 +12,10 @@ import (
 )
 
 type LoginConnector interface {
-	CreateLogin(ctx context.Context, name string, password string, loginSourceType string) error
+	CreateLogin(ctx context.Context, name string, password string, loginSourceType string, roles []string) error
 	GetLogin(ctx context.Context, name string) (*model.Login, error)
 	UpdateLogin(ctx context.Context, name string, password string) error
+	UpdateLoginRoles(ctx context.Context, name string, roles []string) error
 	DeleteLogin(ctx context.Context, name string) error
 }
 
@@ -89,6 +90,13 @@ func resourceLogin() *schema.Resource {
 				Type:     schema.TypeInt,
 				Computed: true,
 			},
+			rolesProp: {
+				Type:     schema.TypeSet,
+				Optional: true,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
+			},
 		},
 		Timeouts: &schema.ResourceTimeout{
 			Default: defaultTimeout,
@@ -116,13 +124,15 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 		return diag.FromErr(err)
 	}
 
+	roles := toStringSlice(data.Get(rolesProp).(*schema.Set).List())
+
 	if sqlLogin, hasSqlLogin := data.GetOk(LoginSourceTypeSQL); hasSqlLogin {
 		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
 
 		loginName := sqlLogin[loginNameProp].(string)
 		password := sqlLogin[passwordProp].(string)
 
-		if err = connector.CreateLogin(ctx, loginName, password, "SQL"); err != nil {
+		if err = connector.CreateLogin(ctx, loginName, password, "SQL", roles); err != nil {
 			logger.Debug().Msgf("Error: %s", err)
 			return diag.FromErr(errors.Wrapf(err, "unable to create login [%s]", loginName))
 		}
@@ -143,7 +153,7 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 			return diag.Errorf("invalid external login type [%s]", externalLogin["external_login_type"].(string))
 		}
 
-		if err = connector.CreateLogin(ctx, loginName, "", sourceType); err != nil {
+		if err = connector.CreateLogin(ctx, loginName, "", sourceType, roles); err != nil {
 			logger.Debug().Msgf("Error: %s", err)
 			return diag.FromErr(errors.Wrapf(err, "unable to create external login [%s]", loginName))
 		}
@@ -194,6 +204,9 @@ func resourceLoginRead(ctx context.Context, data *schema.ResourceData, meta inte
 		if err = data.Set(sidStrProp, login.SIDStr); err != nil {
 			return diag.FromErr(err)
 		}
+		if err = data.Set(rolesProp, login.Roles); err != nil {
+			return diag.FromErr(err)
+		}
 	}
 
 	return nil
@@ -208,10 +221,13 @@ func resourceLoginUpdate(ctx context.Context, data *schema.ResourceData, meta in
 		return diag.FromErr(err)
 	}
 
+	roles := toStringSlice(data.Get(rolesProp).(*schema.Set).List())
+
+	var loginName string
 	if sqlLogin, hasSqlLogin := data.GetOk(LoginSourceTypeSQL); hasSqlLogin {
 		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
 
-		loginName := sqlLogin[loginNameProp].(string)
+		loginName = sqlLogin[loginNameProp].(string)
 		password := sqlLogin[passwordProp].(string)
 
 		if err = connector.UpdateLogin(ctx, loginName, password); err != nil {
@@ -219,11 +235,20 @@ func resourceLoginUpdate(ctx context.Context, data *schema.ResourceData, meta in
 		}
 
 		logger.Info().Msgf("updated SQL login [%s]", loginName)
-	} else if _, hasExternalLogin := data.GetOk(LoginSourceTypeExternal); hasExternalLogin {
-		panic("external login update is not supported")
+	} else if externalLogin, hasExternalLogin := data.GetOk(LoginSourceTypeExternal); hasExternalLogin {
+		// external_login has no updatable properties other than roles, since login_name
+		// and external_login_type are ForceNew.
+		externalLogin := externalLogin.([]interface{})[0].(map[string]interface{})
+		loginName = externalLogin[loginNameProp].(string)
 	} else {
 		return diag.Errorf("either sql_login or external_login must be specified")
 	}
+
+	if err = connector.UpdateLoginRoles(ctx, loginName, roles); err != nil {
+		return diag.FromErr(errors.Wrapf(err, "unable to update roles for login [%s]", loginName))
+	}
+
+	logger.Info().Msgf("updated roles for login [%s]", loginName)
 
 	return resourceLoginRead(ctx, data, meta)
 }

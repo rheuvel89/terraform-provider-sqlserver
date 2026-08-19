@@ -5,6 +5,7 @@ type Login struct {
   LoginName       string
   SIDStr          string
   SourceType      string
+  Roles           []string
 }
 
 type SqlLogin struct {
