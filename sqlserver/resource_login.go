@@ -13,9 +13,11 @@ import (
 
 type LoginConnector interface {
 	CreateLogin(ctx context.Context, name string, password string, loginSourceType string, roles []string) error
+	CreateLoginWithOptions(ctx context.Context, name string, password string, loginSourceType string, roles []string, isDisabled bool) error
 	GetLogin(ctx context.Context, name string) (*model.Login, error)
 	UpdateLogin(ctx context.Context, name string, password string) error
 	UpdateLoginRoles(ctx context.Context, name string, roles []string) error
+	SetLoginDisableState(ctx context.Context, name string, isDisabled bool) error
 	DeleteLogin(ctx context.Context, name string) error
 }
 
@@ -71,10 +73,10 @@ func resourceLogin() *schema.Resource {
 							ForceNew: true,
 						},
 						"external_login_type": {
-							Type:         schema.TypeString,
-							Optional:     true,
-							ForceNew:     true,
-							Default:      "user",
+							Type:             schema.TypeString,
+							Optional:         true,
+							ForceNew:         true,
+							Default:          "user",
 							ValidateDiagFunc: validation.ToDiagFunc(validation.StringInSlice([]string{"user", "group"}, false)),
 						},
 					},
@@ -96,6 +98,11 @@ func resourceLogin() *schema.Resource {
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
+			},
+			isDisabledProp: {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
 			},
 		},
 		Timeouts: &schema.ResourceTimeout{
@@ -125,6 +132,7 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 	}
 
 	roles := toStringSlice(data.Get(rolesProp).(*schema.Set).List())
+	isDisabled := data.Get(isDisabledProp).(bool)
 
 	if sqlLogin, hasSqlLogin := data.GetOk(LoginSourceTypeSQL); hasSqlLogin {
 		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
@@ -132,7 +140,7 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 		loginName := sqlLogin[loginNameProp].(string)
 		password := sqlLogin[passwordProp].(string)
 
-		if err = connector.CreateLogin(ctx, loginName, password, "SQL", roles); err != nil {
+		if err = connector.CreateLoginWithOptions(ctx, loginName, password, "SQL", roles, isDisabled); err != nil {
 			logger.Debug().Msgf("Error: %s", err)
 			return diag.FromErr(errors.Wrapf(err, "unable to create login [%s]", loginName))
 		}
@@ -153,7 +161,7 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 			return diag.Errorf("invalid external login type [%s]", externalLogin["external_login_type"].(string))
 		}
 
-		if err = connector.CreateLogin(ctx, loginName, "", sourceType, roles); err != nil {
+		if err = connector.CreateLoginWithOptions(ctx, loginName, "", sourceType, roles, isDisabled); err != nil {
 			logger.Debug().Msgf("Error: %s", err)
 			return diag.FromErr(errors.Wrapf(err, "unable to create external login [%s]", loginName))
 		}
@@ -207,6 +215,9 @@ func resourceLoginRead(ctx context.Context, data *schema.ResourceData, meta inte
 		if err = data.Set(rolesProp, login.Roles); err != nil {
 			return diag.FromErr(err)
 		}
+		if err = data.Set(isDisabledProp, login.IsDisabled); err != nil {
+			return diag.FromErr(err)
+		}
 	}
 
 	return nil
@@ -222,6 +233,7 @@ func resourceLoginUpdate(ctx context.Context, data *schema.ResourceData, meta in
 	}
 
 	roles := toStringSlice(data.Get(rolesProp).(*schema.Set).List())
+	isDisabled := data.Get(isDisabledProp).(bool)
 
 	var loginName string
 	if sqlLogin, hasSqlLogin := data.GetOk(LoginSourceTypeSQL); hasSqlLogin {
@@ -236,12 +248,19 @@ func resourceLoginUpdate(ctx context.Context, data *schema.ResourceData, meta in
 
 		logger.Info().Msgf("updated SQL login [%s]", loginName)
 	} else if externalLogin, hasExternalLogin := data.GetOk(LoginSourceTypeExternal); hasExternalLogin {
-		// external_login has no updatable properties other than roles, since login_name
+		// external_login has no updatable properties other than roles and is_disabled, since login_name
 		// and external_login_type are ForceNew.
 		externalLogin := externalLogin.([]interface{})[0].(map[string]interface{})
 		loginName = externalLogin[loginNameProp].(string)
 	} else {
 		return diag.Errorf("either sql_login or external_login must be specified")
+	}
+
+	if data.HasChange(isDisabledProp) {
+		if err = connector.SetLoginDisableState(ctx, loginName, isDisabled); err != nil {
+			return diag.FromErr(errors.Wrapf(err, "unable to update disable state for login [%s]", loginName))
+		}
+		logger.Info().Msgf("updated disable state for login [%s]", loginName)
 	}
 
 	if err = connector.UpdateLoginRoles(ctx, loginName, roles); err != nil {

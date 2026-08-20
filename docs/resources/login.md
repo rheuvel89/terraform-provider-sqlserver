@@ -16,6 +16,18 @@ resource "sqlserver_login" "example" {
 }
 ```
 
+### Disabled SQL Login
+
+```hcl
+resource "sqlserver_login" "disabled_example" {
+  sql_login {
+    login_name = "disabledlogin"
+    password   = "NotSoS3cret?"
+  }
+  is_disabled = true
+}
+```
+
 ### External Login (Azure AD)
 
 ```hcl
@@ -37,8 +49,10 @@ resource "sqlserver_login" "external" {
   * `external_login_type` - (Optional) The type of external login. Valid values are `user` or `group`. Defaults to `user`.
 * `sid` - (Optional) The security identifier (SID) for the login. If not specified, SQL Server will generate one.
 * `roles` - (Optional) A set of fixed server roles (e.g. `sysadmin`, `dbcreator`, `securityadmin`) to assign to the login. The built-in `public` role is always assigned and cannot be managed through this attribute.
+* `is_disabled` - (Optional) When set to `true` the login is disabled (cannot connect). Defaults to `false` (login is enabled).
 
 ## Attribute Reference
 
 * `principal_id` - The principal ID of this server login.
 * `sid` - The security identifier (SID) of this login in string format.
+* `is_disabled` - Whether the login is disabled.
