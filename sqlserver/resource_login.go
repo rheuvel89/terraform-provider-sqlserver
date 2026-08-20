@@ -36,9 +36,9 @@ func resourceLogin() *schema.Resource {
 		ReadContext:   resourceLoginRead,
 		UpdateContext: resourceLoginUpdate,
 		DeleteContext: resourceLoginDelete,
-		// Importer: &schema.ResourceImporter{
-		// 	StateContext: resourceLoginImport,
-		// },
+		Importer: &schema.ResourceImporter{
+			StateContext: resourceLoginImport,
+		},
 		Schema: map[string]*schema.Schema{
 			"sql_login": {
 				Type:         schema.TypeList,
@@ -319,13 +319,6 @@ func resourceLoginImport(ctx context.Context, data *schema.ResourceData, meta in
 		return nil, errors.New("invalid ID")
 	}
 	loginName := parts[1]
-	if err = data.Set(loginNameProp, parts[1]); err != nil {
-		return nil, err
-	}
-
-	data.SetId(getLoginID(meta, data))
-
-	//	loginName := data.Get(loginNameProp).(string)
 
 	connector, err := getLoginConnector(meta, data)
 	if err != nil {
@@ -341,12 +334,51 @@ func resourceLoginImport(ctx context.Context, data *schema.ResourceData, meta in
 		return nil, errors.Errorf("no login [%s] found for import", loginName)
 	}
 
+	// Determine the login type from its source type and populate the appropriate nested block
+	switch login.SourceType {
+	case "SQL_LOGIN":
+		if err = data.Set(LoginSourceTypeSQL, []interface{}{map[string]interface{}{
+			loginNameProp: login.LoginName,
+		}}); err != nil {
+			return nil, err
+		}
+	case "EXTERNAL_LOGIN":
+		// sys.server_principals.type_desc reports individual Azure AD logins as
+		// EXTERNAL_LOGIN (not EXTERNAL_USER, which is only used internally when
+		// building the CREATE LOGIN statement).
+		if err = data.Set(LoginSourceTypeExternal, []interface{}{map[string]interface{}{
+			loginNameProp:         login.LoginName,
+			"external_login_type": "user",
+		}}); err != nil {
+			return nil, err
+		}
+	case "EXTERNAL_GROUP":
+		if err = data.Set(LoginSourceTypeExternal, []interface{}{map[string]interface{}{
+			loginNameProp:         login.LoginName,
+			"external_login_type": "group",
+		}}); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, errors.Errorf("unknown login source type [%s]", login.SourceType)
+	}
+
 	if err = data.Set(principalIdProp, login.PrincipalID); err != nil {
 		return nil, err
 	}
 	if err = data.Set(sidStrProp, login.SIDStr); err != nil {
 		return nil, err
 	}
+	if err = data.Set(rolesProp, login.Roles); err != nil {
+		return nil, err
+	}
+	if err = data.Set(isDisabledProp, login.IsDisabled); err != nil {
+		return nil, err
+	}
+
+	// Compute the final ID now that sql_login/external_login has been populated above;
+	// getLoginID reads the login name from those nested blocks.
+	data.SetId(getLoginID(meta, data))
 
 	return []*schema.ResourceData{data}, nil
 }
