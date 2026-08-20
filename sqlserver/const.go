@@ -12,6 +12,7 @@ const (
 	loginSourceTypeProp    = "login_source_type"
 	authenticationTypeProp = "authentication_type"
 	rolesProp              = "roles"
+	isDisabledProp         = "is_disabled"
 
 	LoginSourceTypeSQL      = "sql_login"
 	LoginSourceTypeExternal = "external_login"

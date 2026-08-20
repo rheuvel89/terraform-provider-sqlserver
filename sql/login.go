@@ -13,15 +13,15 @@ func (c *Connector) GetLogin(ctx context.Context, name string) (*model.Login, er
 		roles string
 	)
 	err := c.QueryRowContext(ctx,
-		`SELECT p.[principal_id], p.[name], CONVERT(VARCHAR(1000), p.[sid], 1), p.[type_desc], COALESCE(STRING_AGG(r.[name], ',') WITHIN GROUP (ORDER BY r.[name]), '')
+		`SELECT p.[principal_id], p.[name], CONVERT(VARCHAR(1000), p.[sid], 1), p.[type_desc], COALESCE(STRING_AGG(r.[name], ',') WITHIN GROUP (ORDER BY r.[name]), ''), COALESCE(p.[is_disabled], 0)
          FROM sys.server_principals p
            LEFT JOIN sys.sql_logins l ON p.principal_id = l.principal_id
            LEFT JOIN sys.server_role_members rm ON p.principal_id = rm.member_principal_id
            LEFT JOIN sys.server_principals r ON rm.role_principal_id = r.principal_id AND r.[type] = 'R' AND r.[name] != 'public'
          WHERE p.[name] = @name
-         GROUP BY p.[principal_id], p.[name], p.[sid], p.[type_desc]`,
+         GROUP BY p.[principal_id], p.[name], p.[sid], p.[type_desc], p.[is_disabled]`,
 		func(r *sql.Row) error {
-			result := r.Scan(&login.PrincipalID, &login.LoginName, &login.SIDStr, &login.SourceType, &roles)
+			result := r.Scan(&login.PrincipalID, &login.LoginName, &login.SIDStr, &login.SourceType, &roles, &login.IsDisabled)
 			return result
 		},
 		sql.Named("name", name),
@@ -48,7 +48,7 @@ func (c *Connector) CreateLogin(ctx context.Context, name, password, sourceType 
             END
           ELSE
             BEGIN
-              SET @sql = 'CREATE LOGIN ' + QuoteName(@name) + ' ' + 'WITH PASSWORD = ' + QuoteName(@password, '''')
+              SET @sql = 'CREATE LOGIN ' + QuoteName(@name) + ' WITH PASSWORD = ' + QuoteName(@password, '''')
             END
           EXEC (@sql)
 
@@ -77,6 +77,63 @@ func (c *Connector) CreateLogin(ctx context.Context, name, password, sourceType 
 			sql.Named("password", password),
 			sql.Named("sourceType", sourceType),
 			sql.Named("roles", strings.Join(roles, ",")))
+}
+
+func (c *Connector) CreateLoginWithOptions(ctx context.Context, name, password, sourceType string, roles []string, isDisabled bool) error {
+	cmd := `DECLARE @sql nvarchar(max)
+          IF @sourceType = 'EXTERNAL_GROUP' OR @sourceType = 'EXTERNAL_USER'
+            BEGIN
+              SET @sql = 'CREATE LOGIN ' + QuoteName(@name) + ' FROM EXTERNAL PROVIDER'
+            END
+          ELSE
+            BEGIN
+              SET @sql = 'CREATE LOGIN ' + QuoteName(@name) + ' WITH PASSWORD = ' + QuoteName(@password, '''')
+            END
+          EXEC (@sql)
+
+          -- CREATE LOGIN has no DISABLE option, so disable the login afterwards if requested
+          IF @isDisabled = 1
+            BEGIN
+              SET @sql = 'ALTER LOGIN ' + QuoteName(@name) + ' DISABLE'
+              EXEC (@sql)
+            END
+
+          DECLARE role_cur CURSOR FAST_FORWARD FOR
+            SELECT [name] FROM sys.server_principals
+            WHERE [type] = 'R' AND [name] != 'public'
+              AND [name] COLLATE SQL_Latin1_General_CP1_CI_AS IN (SELECT value FROM STRING_SPLIT(@roles, ','))
+          DECLARE @role nvarchar(max)
+          DECLARE @roleSql nvarchar(max)
+          OPEN role_cur
+          FETCH NEXT FROM role_cur INTO @role
+          WHILE @@FETCH_STATUS = 0
+          BEGIN
+            SET @roleSql = 'ALTER SERVER ROLE ' + QuoteName(@role) + ' ADD MEMBER ' + QuoteName(@name)
+            EXEC (@roleSql)
+            FETCH NEXT FROM role_cur INTO @role
+          END
+          CLOSE role_cur
+          DEALLOCATE role_cur`
+
+	database := "master"
+	return c.
+		setDatabase(&database).
+		ExecContext(ctx, cmd,
+			sql.Named("name", name),
+			sql.Named("password", password),
+			sql.Named("sourceType", sourceType),
+			sql.Named("roles", strings.Join(roles, ",")),
+			sql.Named("isDisabled", isDisabled))
+}
+
+func (c *Connector) SetLoginDisableState(ctx context.Context, name string, isDisabled bool) error {
+	cmd := `DECLARE @sql nvarchar(max)
+          SET @sql = 'ALTER LOGIN ' + QuoteName(@name) + ' ' +
+                     CASE WHEN @isDisabled = 1 THEN 'DISABLE' ELSE 'ENABLE' END
+          EXEC (@sql)`
+	return c.ExecContext(ctx, cmd,
+		sql.Named("name", name),
+		sql.Named("isDisabled", isDisabled))
 }
 
 func (c *Connector) UpdateLogin(ctx context.Context, name string, password string) error {

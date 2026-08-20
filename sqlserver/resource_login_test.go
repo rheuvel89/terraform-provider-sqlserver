@@ -252,6 +252,58 @@ func TestAccLogin_Azure_UpdatePassword(t *testing.T) {
 		}})
 }
 
+func TestAccLogin_Local_Disabled(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      func(state *terraform.State) error { return testAccCheckLoginDestroy(state) },
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCheckLogin(t, "disabled", false, map[string]interface{}{"login_name": "login_disabled", "password": "valueIsH8kd$¡", "is_disabled": "true"}),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLoginExists("sqlserver_login.disabled"),
+					resource.TestCheckResourceAttr("sqlserver_login.disabled", "is_disabled", "true"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccLogin_Local_Disabled_Update(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      func(state *terraform.State) error { return testAccCheckLoginDestroy(state) },
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCheckLogin(t, "test_disabled_update", false, map[string]interface{}{"login_name": "login_disabled_update", "password": "valueIsH8kd$¡"}),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLoginExists("sqlserver_login.test_disabled_update"),
+					resource.TestCheckResourceAttr("sqlserver_login.test_disabled_update", "is_disabled", "false"),
+					testAccCheckLoginWorks("sqlserver_login.test_disabled_update"),
+				),
+			},
+			{
+				Config: testAccCheckLogin(t, "test_disabled_update", false, map[string]interface{}{"login_name": "login_disabled_update", "password": "valueIsH8kd$¡", "is_disabled": "true"}),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLoginExists("sqlserver_login.test_disabled_update"),
+					resource.TestCheckResourceAttr("sqlserver_login.test_disabled_update", "is_disabled", "true"),
+				),
+			},
+			{
+				Config: testAccCheckLogin(t, "test_disabled_update", false, map[string]interface{}{"login_name": "login_disabled_update", "password": "valueIsH8kd$¡", "is_disabled": "false"}),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLoginExists("sqlserver_login.test_disabled_update"),
+					resource.TestCheckResourceAttr("sqlserver_login.test_disabled_update", "is_disabled", "false"),
+					testAccCheckLoginWorks("sqlserver_login.test_disabled_update"),
+				),
+			},
+		},
+	})
+}
+
 func testAccCheckLogin(t *testing.T, name string, azure bool, data map[string]interface{}) string {
 	text := `provider "sqlserver" {
              login {}
@@ -264,6 +316,7 @@ func testAccCheckLogin(t *testing.T, name string, azure bool, data map[string]in
              }
              {{ with .sid }}sid = "{{ . }}"{{ end }}
              {{ with .roles }}roles = {{ . }}{{ end }}
+             {{ with .is_disabled }}is_disabled = {{ . }}{{ end }}
            }`
 	data["name"] = name
 	data["azure"] = azure
