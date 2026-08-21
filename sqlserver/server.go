@@ -35,7 +35,10 @@ func serverFromId(id string) ([]map[string]interface{}, *url.URL, error) {
 	login, loginInValues := getLogin(values)
 	azureLogin, azureInValues := getAzureLogin(values)
 	if login == nil && azureLogin == nil {
-		return nil, nil, errors.New("neither login nor azure login specified")
+		// Credentials may be provided by the provider configuration rather than
+		// the resource ID (e.g. during import). Return an empty server config
+		// and let the caller use the provider-level login.
+		login = []map[string]interface{}{{}}
 	}
 	if loginInValues && azureInValues {
 		return nil, nil, errors.New("both login and azure login specified in resource")
