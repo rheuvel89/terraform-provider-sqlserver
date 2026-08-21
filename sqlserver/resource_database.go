@@ -95,6 +95,18 @@ func resourceDatabaseCreate(ctx context.Context, data *schema.ResourceData, meta
 
 	logger.Info().Msgf("created database [%s]", name)
 
+	// recovery_model and compatibility_level cannot be specified in CREATE DATABASE,
+	// so apply them with an ALTER DATABASE right after creation when the user set them.
+	db := &model.Database{
+		RecoveryModel:      data.Get(recoveryModelProp).(string),
+		CompatibilityLevel: data.Get(compatibilityLevelProp).(int),
+	}
+	if db.RecoveryModel != "" || db.CompatibilityLevel > 0 {
+		if err = connector.UpdateDatabase(ctx, name, db); err != nil {
+			return diag.FromErr(errors.Wrapf(err, "unable to set options on database [%s]", name))
+		}
+	}
+
 	data.SetId(getDatabaseID(meta, data))
 
 	return resourceDatabaseRead(ctx, data, meta)
