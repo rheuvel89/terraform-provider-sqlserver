@@ -54,4 +54,11 @@ const (
 	functionBodyProp           = "function_body"
 	functionObjectIdProp       = "object_id"
 	fullyQualifiedNameProp     = "fully_qualified_name"
+
+	// Database properties
+	databaseNameProp       = "name"
+	collationProp          = "collation"
+	recoveryModelProp      = "recovery_model"
+	compatibilityLevelProp = "compatibility_level"
+	ownerProp              = "owner"
 )
