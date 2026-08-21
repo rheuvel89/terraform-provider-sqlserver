@@ -56,3 +56,19 @@ resource "sqlserver_login" "external" {
 * `principal_id` - The principal ID of this server login.
 * `sid` - The security identifier (SID) of this login in string format.
 * `is_disabled` - Whether the login is disabled.
+
+## Import
+
+Logins can be imported using a resource ID with the following format:
+
+```shell
+terraform import sqlserver_login.example sqlserver://host:port/login/LoginName
+```
+
+or as a terraform import block:
+```tf
+import {
+  to = sqlserver_login.example
+  id = "sqlserver://host:port/login/LoginName"
+}
+```
