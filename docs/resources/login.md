@@ -72,3 +72,9 @@ import {
   id = "sqlserver://host:port/login/LoginName"
 }
 ```
+
+Include credentials when provider credentials are not sufficient like:
+
+```
+terraform import sqlserver_login.example sqlserver://host:port/login/LoginName?username=username&password=p@55word
+```
