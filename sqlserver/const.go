@@ -7,6 +7,8 @@ const (
 	loginNameProp          = "login_name"
 	objectIdProp           = "object_id"
 	passwordProp           = "password"
+	passwordWoProp         = "password_wo"
+	passwordWoVersionProp  = "password_wo_version"
 	sidStrProp             = "sid"
 	clientIdProp           = "client_id"
 	loginSourceTypeProp    = "login_source_type"

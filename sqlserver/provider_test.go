@@ -102,6 +102,29 @@ func getTestConnector(a map[string]string) (TestConnector, error) {
 	return testConnector{c: connector}, nil
 }
 
+// getTestLoginConnectorWithPassword builds a connector using an explicitly
+// supplied password rather than reading it from state, since write-only
+// arguments like password_wo are never persisted to state.
+func getTestLoginConnectorWithPassword(loginName, password string) (TestConnector, error) {
+	host := os.Getenv("TF_SQLSERVER_HOST")
+	port, ok := os.LookupEnv("TF_SQLSERVER_PORT")
+	if !ok {
+		port = DefaultPort
+	}
+
+	connector := &sql.Connector{
+		Host:    host,
+		Port:    port,
+		Timeout: 60 * time.Second,
+		Login: &sql.LoginUser{
+			Username: loginName,
+			Password: password,
+		},
+	}
+
+	return testConnector{c: connector}, nil
+}
+
 func getTestLoginConnector(a map[string]string) (TestConnector, error) {
 	host := os.Getenv("TF_SQLSERVER_HOST")
 	port, ok := os.LookupEnv("TF_SQLSERVER_PORT")
