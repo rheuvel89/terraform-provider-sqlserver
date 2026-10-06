@@ -5,6 +5,7 @@ import (
 	"strings"
 	"terraform-provider-sqlserver/sqlserver/model"
 
+	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
@@ -36,6 +37,7 @@ func resourceLogin() *schema.Resource {
 		ReadContext:   resourceLoginRead,
 		UpdateContext: resourceLoginUpdate,
 		DeleteContext: resourceLoginDelete,
+		CustomizeDiff: resourceLoginCustomizeDiff,
 		Importer: &schema.ResourceImporter{
 			StateContext: resourceLoginImport,
 		},
@@ -54,8 +56,22 @@ func resourceLogin() *schema.Resource {
 						},
 						passwordProp: {
 							Type:      schema.TypeString,
-							Required:  true,
+							Optional:  true,
 							Sensitive: true,
+						},
+						// password_wo is the write-only counterpart of password: its value is
+						// never persisted to plan or state, so it accepts ephemeral values
+						// (e.g. ephemeral.random_password). Exactly one of password/password_wo
+						// must be set; bump password_wo_version to rotate the password.
+						passwordWoProp: {
+							Type:      schema.TypeString,
+							Optional:  true,
+							Sensitive: true,
+							WriteOnly: true,
+						},
+						passwordWoVersionProp: {
+							Type:     schema.TypeInt,
+							Optional: true,
 						},
 					},
 				},
@@ -138,7 +154,10 @@ func resourceLoginCreate(ctx context.Context, data *schema.ResourceData, meta in
 		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
 
 		loginName := sqlLogin[loginNameProp].(string)
-		password := sqlLogin[passwordProp].(string)
+		password, err := getSqlLoginPassword(data, sqlLogin)
+		if err != nil {
+			return diag.FromErr(err)
+		}
 
 		if err = connector.CreateLoginWithOptions(ctx, loginName, password, "SQL", roles, isDisabled); err != nil {
 			logger.Debug().Msgf("Error: %s", err)
@@ -240,7 +259,10 @@ func resourceLoginUpdate(ctx context.Context, data *schema.ResourceData, meta in
 		sqlLogin := sqlLogin.([]interface{})[0].(map[string]interface{})
 
 		loginName = sqlLogin[loginNameProp].(string)
-		password := sqlLogin[passwordProp].(string)
+		password, err := getSqlLoginPassword(data, sqlLogin)
+		if err != nil {
+			return diag.FromErr(err)
+		}
 
 		if err = connector.UpdateLogin(ctx, loginName, password); err != nil {
 			return diag.FromErr(errors.Wrapf(err, "unable to update login [%s]", loginName))
@@ -381,6 +403,50 @@ func resourceLoginImport(ctx context.Context, data *schema.ResourceData, meta in
 	data.SetId(getLoginID(meta, data))
 
 	return []*schema.ResourceData{data}, nil
+}
+
+// resourceLoginCustomizeDiff enforces that sql_login configurations use exactly
+// one of password/password_wo, and that password_wo_version is set whenever
+// password_wo is used (so Terraform can detect when to rotate the password).
+// This cannot be expressed via ExactlyOneOf/RequiredWith because those schema
+// fields are not supported on write-only attributes.
+func resourceLoginCustomizeDiff(ctx context.Context, diff *schema.ResourceDiff, meta interface{}) error {
+	sqlLoginList := diff.GetRawConfig().GetAttr(LoginSourceTypeSQL)
+	if sqlLoginList.IsNull() || sqlLoginList.LengthInt() == 0 {
+		return nil
+	}
+
+	sqlLogin := sqlLoginList.Index(cty.NumberIntVal(0))
+	hasPassword := !sqlLogin.GetAttr(passwordProp).IsNull()
+	hasPasswordWo := !sqlLogin.GetAttr(passwordWoProp).IsNull()
+
+	if hasPassword == hasPasswordWo {
+		return errors.New("sql_login requires exactly one of 'password' or 'password_wo' to be set")
+	}
+	if hasPasswordWo && sqlLogin.GetAttr(passwordWoVersionProp).IsNull() {
+		return errors.New("sql_login.password_wo_version must be set when sql_login.password_wo is used")
+	}
+
+	return nil
+}
+
+// getSqlLoginPassword resolves the login password from either the regular
+// (stateful) password argument or the write-only password_wo argument, which
+// must be read from the raw configuration since its value is never persisted.
+func getSqlLoginPassword(data *schema.ResourceData, sqlLogin map[string]interface{}) (string, error) {
+	if password, ok := sqlLogin[passwordProp].(string); ok && password != "" {
+		return password, nil
+	}
+
+	woVal, diags := data.GetRawConfigAt(cty.GetAttrPath(LoginSourceTypeSQL).IndexInt(0).GetAttr(passwordWoProp))
+	if diags.HasError() {
+		return "", errors.New("unable to read sql_login.password_wo from configuration")
+	}
+	if !woVal.IsNull() && woVal.Type().Equals(cty.String) {
+		return woVal.AsString(), nil
+	}
+
+	return "", errors.New("sql_login requires either 'password' or 'password_wo' to be set")
 }
 
 func getLoginConnector(meta interface{}, data *schema.ResourceData) (LoginConnector, error) {

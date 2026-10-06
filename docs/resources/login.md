@@ -16,6 +16,26 @@ resource "sqlserver_login" "example" {
 }
 ```
 
+### SQL Login with an Ephemeral Password
+
+Requires Terraform CLI 1.11 or later, since `password_wo` is a write-only argument.
+
+Use a write-only argument together with an ephemeral value (e.g. [`ephemeral.random_password`](https://registry.terraform.io/providers/hashicorp/random/latest/docs/ephemeral-resources/password)) so the password is never written to the plan or state file. `password_wo_version` must be bumped to rotate the password.
+
+```hcl
+ephemeral "random_password" "example" {
+  length = 64
+}
+
+resource "sqlserver_login" "example" {
+  sql_login {
+    login_name          = "testlogin"
+    password_wo         = ephemeral.random_password.example.result
+    password_wo_version = 1
+  }
+}
+```
+
 ### Disabled SQL Login
 
 ```hcl
@@ -43,7 +63,9 @@ resource "sqlserver_login" "external" {
 
 * `sql_login` - (Optional) Block for SQL login. Only one of `sql_login` or `external_login` can be specified.
   * `login_name` - (Required) The name of the SQL login.
-  * `password` - (Required, Sensitive) The password for the SQL login.
+  * `password` - (Optional, Sensitive) The password for the SQL login. Exactly one of `password` or `password_wo` must be set.
+  * `password_wo` - (Optional, Sensitive, Write-Only) The password for the SQL login. Accepts ephemeral values and is never persisted to plan or state. Exactly one of `password` or `password_wo` must be set.
+  * `password_wo_version` - (Optional) An integer used to trigger rotation of `password_wo`. Increment this value whenever `password_wo` changes.
 * `external_login` - (Optional) Block for external login. Only one of `sql_login` or `external_login` can be specified.
   * `login_name` - (Required) The name of the external login.
   * `external_login_type` - (Optional) The type of external login. Valid values are `user` or `group`. Defaults to `user`.

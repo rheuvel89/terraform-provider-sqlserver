@@ -2,11 +2,65 @@ package sqlserver
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
+
+// TestLogin_SqlLogin_PasswordValidation exercises the password/password_wo
+// CustomizeDiff validation. It requires no SQL Server connection since every
+// step fails during plan, before the provider's Create is ever invoked.
+func TestLogin_SqlLogin_PasswordValidation(t *testing.T) {
+	providerConfig := `provider "sqlserver" {
+  login {
+    username = "sa"
+    password = "not-used"
+  }
+}
+`
+	resource.Test(t, resource.TestCase{
+		IsUnitTest:        true,
+		ProviderFactories: testAccProviders,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig + `
+resource "sqlserver_login" "invalid" {
+  sql_login {
+    login_name = "login_invalid"
+  }
+}`,
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile("exactly one of 'password' or 'password_wo'"),
+			},
+			{
+				Config: providerConfig + `
+resource "sqlserver_login" "invalid" {
+  sql_login {
+    login_name          = "login_invalid"
+    password             = "valueIsH8kd$¡"
+    password_wo          = "other"
+    password_wo_version  = 1
+  }
+}`,
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile("exactly one of 'password' or 'password_wo'"),
+			},
+			{
+				Config: providerConfig + `
+resource "sqlserver_login" "invalid" {
+  sql_login {
+    login_name  = "login_invalid"
+    password_wo = "valueIsH8kd$¡"
+  }
+}`,
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile("password_wo_version must be set"),
+			},
+		},
+	})
+}
 
 func TestAccLogin_Local_Basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
@@ -252,6 +306,53 @@ func TestAccLogin_Azure_UpdatePassword(t *testing.T) {
 		}})
 }
 
+func TestAccLogin_Local_PasswordWriteOnly(t *testing.T) {
+	providerConfig := `provider "sqlserver" {
+  login {}
+}
+`
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      func(state *terraform.State) error { return testAccCheckLoginDestroy(state) },
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig + `
+resource "sqlserver_login" "wo" {
+  sql_login {
+    login_name          = "login_wo"
+    password_wo         = "valueIsH8kd$¡"
+    password_wo_version = 1
+  }
+}`,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLoginExists("sqlserver_login.wo"),
+					testAccCheckLoginWorksWithPassword("sqlserver_login.wo", "login_wo", "valueIsH8kd$¡"),
+					resource.TestCheckResourceAttr("sqlserver_login.wo", "sql_login.0.login_name", "login_wo"),
+					resource.TestCheckResourceAttr("sqlserver_login.wo", "sql_login.0.password", ""),
+					resource.TestCheckNoResourceAttr("sqlserver_login.wo", "sql_login.0.password_wo"),
+				),
+			},
+			{
+				// bumping password_wo_version rotates the password
+				Config: providerConfig + `
+resource "sqlserver_login" "wo" {
+  sql_login {
+    login_name          = "login_wo"
+    password_wo         = "rotatedIsH8kd$¡"
+    password_wo_version = 2
+  }
+}`,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLoginExists("sqlserver_login.wo"),
+					testAccCheckLoginWorksWithPassword("sqlserver_login.wo", "login_wo", "rotatedIsH8kd$¡"),
+				),
+			},
+		},
+	})
+}
+
 func TestAccLogin_Local_Disabled(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
@@ -418,6 +519,33 @@ func testAccCheckLoginWorks(resource string) resource.TestCheckFunc {
 		}
 		if systemUser != rs.Primary.Attributes["sql_login.0.login_name"] {
 			return fmt.Errorf("expected to log in as [%s], got [%s]", rs.Primary.Attributes["sql_login.0.login_name"], systemUser)
+		}
+		return nil
+	}
+}
+
+// testAccCheckLoginWorksWithPassword verifies connectivity using an explicitly
+// known password, since write-only arguments (password_wo) are never
+// persisted to state and so cannot be read back from rs.Primary.Attributes.
+func testAccCheckLoginWorksWithPassword(resource, loginName, password string) resource.TestCheckFunc {
+	return func(state *terraform.State) error {
+		rs, ok := state.RootModule().Resources[resource]
+		if !ok {
+			return fmt.Errorf("not found: %s", resource)
+		}
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("no record ID is set")
+		}
+		connector, err := getTestLoginConnectorWithPassword(loginName, password)
+		if err != nil {
+			return err
+		}
+		systemUser, err := connector.GetSystemUser()
+		if err != nil {
+			return err
+		}
+		if systemUser != loginName {
+			return fmt.Errorf("expected to log in as [%s], got [%s]", loginName, systemUser)
 		}
 		return nil
 	}
