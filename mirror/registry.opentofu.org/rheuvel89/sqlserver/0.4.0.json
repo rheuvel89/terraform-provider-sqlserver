@@ -1,0 +1,16 @@
+{
+  "archives": {
+    "linux_amd64": {
+      "url": "https://github.com/rheuvel89/terraform-provider-sqlserver/releases/download/v0.4.0/terraform-provider-sqlserver_0.4.0_linux_amd64.zip",
+      "hashes": ["zh:a4bff1460899eabd2142a8af3d8d2c1d8a2d091a76292dd144b60b80f2bd8f7f"]
+    },
+    "darwin_arm64": {
+      "url": "https://github.com/rheuvel89/terraform-provider-sqlserver/releases/download/v0.4.0/terraform-provider-sqlserver_0.4.0_darwin_arm64.zip",
+      "hashes": ["zh:70c198b5e75ba40099143e0e851907658b1c3c5840094731b6038442da923b66"]
+    },
+    "linux_arm64": {
+        "url": "https://github.com/rheuvel89/terraform-provider-sqlserver/releases/download/v0.4.0/terraform-provider-sqlserver_0.4.0_linux_arm64",
+        "hashes": ["zh:154c8555b19cb41ee48dbdbf48ba857bb9d510eb10caa40100b363487952e6ee"]
+    }
+  }
+}
