@@ -16,12 +16,12 @@ func TestRetryOnDeadlock(t *testing.T) {
 		name      string
 		errs      []error
 		wantCalls int
-		wantErr   error
+		wantErr   int32 // mssql error number, 0 for no error
 	}{
-		{"success", []error{nil}, 1, nil},
-		{"other error is not retried", []error{other}, 1, other},
-		{"deadlock then success", []error{deadlock, deadlock, nil}, 3, nil},
-		{"gives up after the last attempt", []error{deadlock, deadlock, deadlock, deadlock, deadlock, nil}, agentDeadlockAttempts, deadlock},
+		{"success", []error{nil}, 1, 0},
+		{"other error is not retried", []error{other}, 1, other.Number},
+		{"deadlock then success", []error{deadlock, deadlock, nil}, 3, 0},
+		{"gives up after the last attempt", []error{deadlock, deadlock, deadlock, deadlock, deadlock, nil}, agentDeadlockAttempts, errDeadlockVictim},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -33,8 +33,15 @@ func TestRetryOnDeadlock(t *testing.T) {
 			if calls != tt.wantCalls {
 				t.Errorf("calls = %d, want %d", calls, tt.wantCalls)
 			}
-			if !errors.Is(err, tt.wantErr) && err != tt.wantErr {
-				t.Errorf("err = %v, want %v", err, tt.wantErr)
+			var got int32
+			var sqlErr mssql.Error
+			if errors.As(err, &sqlErr) {
+				got = sqlErr.Number
+			} else if err != nil {
+				t.Fatalf("unexpected error type %T", err)
+			}
+			if got != tt.wantErr {
+				t.Errorf("err = %v, want error number %d", err, tt.wantErr)
 			}
 		})
 	}
