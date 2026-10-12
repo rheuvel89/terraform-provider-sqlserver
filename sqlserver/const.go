@@ -94,3 +94,20 @@ var agentNotifyLevels = map[string]int{
 	"on_failure": 2,
 	"always":     3,
 }
+
+const (
+	// SQL Server Agent schedule properties
+	agentFrequencyTypeProp       = "frequency_type"
+	agentRecurrenceFactorProp    = "recurrence_factor"
+	agentWeeklyDaysProp          = "weekly_days"
+	agentMonthlyDayProp          = "monthly_day"
+	agentMonthlyRelativeWeekProp = "monthly_relative_week"
+	agentMonthlyRelativeDayProp  = "monthly_relative_day"
+	agentSubdayTypeProp          = "subday_type"
+	agentSubdayIntervalProp      = "subday_interval"
+	agentActiveStartDateProp     = "active_start_date"
+	agentActiveEndDateProp       = "active_end_date"
+	agentActiveStartTimeProp     = "active_start_time"
+	agentActiveEndTimeProp       = "active_end_time"
+	agentScheduleUidProp         = "schedule_uid"
+)
