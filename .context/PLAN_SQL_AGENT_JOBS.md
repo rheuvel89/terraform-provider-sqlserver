@@ -78,8 +78,8 @@ resource "sqlserver_agent_job_step" "notify" {
 | `name` | Required, ForceNew | |
 | `step_id` | Computed | current position, read from msdb |
 | `command` | Required | T-SQL |
-| `database_name` | Optional+Computed | default `master` |
-| `database_user_name` | Optional | runs as that user (needs sysadmin) |
+| `database_name` | Optional | default `master`; removing it from config moves the step back to `master`. Not a ForceNew: changed in place via `sp_update_jobstep`. |
+| `database_user_name` | Optional | the step runs as `EXECUTE AS USER` for this user in `database_name`. Only allowed when the job owner is sysadmin (see **Run-as** below). |
 | `on_success_action` | Optional | `quit_with_success \| quit_with_failure \| go_to_next_step \| go_to_step`, default `go_to_next_step` (as in SSMS) |
 | `on_success_step_name` | Optional | required iff action = `go_to_step`; **must be an earlier step** |
 | `on_fail_action` | Optional | default `quit_with_failure` |
@@ -111,6 +111,13 @@ resource "sqlserver_agent_job_step" "notify" {
   - `on_*_step_name` points at a later step: apply-time error (positions are only known once the chain exists).
 - **Renumbering:** before every insert, delete or move (under the lock) the provider snapshots all jumps in the job as source name → target name; afterwards it rewrites every `on_*_step_id` that no longer matches. This holds whatever msdb itself does on renumbering (see the spike).
 - **Documented limits:** a step can't jump to itself.
+
+**Run-as (`database_user_name`)**
+- Empty: SQL Server's own rules apply. With a sysadmin job owner the step runs as the SQL Agent service account; with a non-sysadmin owner it runs as the owner. It never uses the login Terraform connects with, unless that login is the owner.
+- Set: on Create/Update, under the job lock and before `sp_add_jobstep` / `sp_update_jobstep`, the provider reads the job's current owner from `msdb.dbo.sysjobs` and checks `IS_SRVROLEMEMBER('sysadmin', <owner>) = 1`. If not, apply fails with e.g. `step "load" sets database_user_name, but job "nightly_etl" is owned by "etl_owner", which is not sysadmin; SQL Server only honours database_user_name for sysadmin-owned jobs. Remove database_user_name or make the owner sysadmin.` This replaces SQL Server's own, less clear error or silent ignore.
+- The check runs at apply time, not plan time, because the owner may be unknown at plan (it defaults to the connecting login) and its role membership can only be read from the server.
+- The check doesn't verify that the user exists in `database_name`; SQL Server's own error from `sp_add_jobstep` / at run time covers that.
+- Changing the job's `owner_login_name` to a non-sysadmin while a step still sets `database_user_name` isn't caught: the job resource doesn't know about its steps, and the step only re-checks when it is itself created or updated. This is documented rather than checked.
 
 **Plan registry (chain validation)**
 - `sqlserver/agent_plan_registry.go`: a package-level, mutex-guarded registry. All resources in one plan are planned by the same provider process, so it is shared by every step in that plan.
@@ -217,9 +224,13 @@ ID: `sqlserver://host:port/agent_operator/<id>`
      - the jump survives an insert before its target (renumbering);
      - changing the source's `command` keeps the forward jump; removing the target resets the source to the default action;
      - the conflict errors: double claim (at plan), forward `on_*_step_name` and a source with its own non-default action (at apply).
-  4. Schedule: one case per `frequency_type`, checking the friendly values read back unchanged and that the plan is empty afterwards.
-  5. Attachment: attach and detach. Assert the schedule **still exists** after the job is destroyed (this covers the `@delete_unused_schedule = 0` fix).
-  6. Operator plus a job with `notify_level_email = on_failure`.
+  4. Step run-as and database:
+     - `database_name` set to a user database, then removed from config: the step is back in `master` with an empty plan afterwards;
+     - `database_user_name` with a sysadmin owner applies and reads back unchanged;
+     - `database_user_name` on a job owned by a non-sysadmin login fails at apply with the run-as error (`ExpectError`).
+  5. Schedule: one case per `frequency_type`, checking the friendly values read back unchanged and that the plan is empty afterwards.
+  6. Attachment: attach and detach. Assert the schedule **still exists** after the job is destroyed (this covers the `@delete_unused_schedule = 0` fix).
+  7. Operator plus a job with `notify_level_email = on_failure`.
 - `TestProvider` (`InternalValidate`) covers all the new schemas automatically.
 
 ## 5. Docs and examples
@@ -227,6 +238,8 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 - `examples/agent_job/main.tf`: an end-to-end example with an operator, a job, 3 chained steps, a forward failure jump to a notify step, a shared schedule attached to two jobs, and email on failure.
 - The docs cover:
   - the required permissions (`SQLAgentOperatorRole` / sysadmin for owner changes and `database_user_name`) and MI limitations;
+  - who a step runs as: with `database_user_name` empty and a sysadmin owner (the default when Terraform connects as sysadmin) the step runs as the SQL Agent service account, i.e. with full sysadmin rights; `database_user_name` or a non-sysadmin owner limits that, and `EXECUTE AS USER` can't reach other databases;
+  - when to use `master` vs. a user database for `database_name`, and referencing `sqlserver_database.x.name` so the step depends on the database;
   - the chain (`job_id` on the first step, `previous_step_id` on the rest), that it can't fork, and the plan-time check with its limits;
   - the jump rule (declared on the later step), with an example of each direction;
   - that the step lock only covers a single apply.
@@ -256,4 +269,5 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 - Operator pager and net-send fields are left out because they're deprecated.
 - `on_success_action` defaults to `go_to_next_step`, matching SSMS rather than `sp_add_jobstep`'s `quit_with_success`.
 - Removing a forward jump resets the source to the default action rather than to whatever it was before.
-- `category_name` on the job and operator is Optional with the built-in uncategorized category as its default, not Optional+Computed, so that removing it from config reverts the server and changes made outside Terraform show up as drift.
+- `category_name` on the job and operator is Optional with the built-in uncategorized category as its default, not Optional+Computed, so that removing it from config reverts the server and changes made outside Terraform show up as drift. The same applies to the step's `database_name` (default `master`).
+- `database_user_name` on a non-sysadmin-owned job is an apply-time error from the provider rather than left to SQL Server.
