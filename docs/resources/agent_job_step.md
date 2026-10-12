@@ -82,7 +82,7 @@ jump is deleted, the jumping step falls back to its default action. A step can't
 ## Argument Reference
 
 * `job_id` - (Optional) The `job_id` of the job. Set it on the first step only. Exactly one of `job_id` and
-  `previous_step_id` is required.
+  `previous_step_id` is required. A step can't move to another job; see [Limits](#limits).
 * `previous_step_id` - (Optional) The `id` of the step that runs before this one. Changing it moves the step.
 * `name` - (Required, ForceNew) The name of the step, unique within the job.
 * `command` - (Required) The T-SQL the step runs. Leading and trailing whitespace is ignored when comparing.
@@ -135,6 +135,10 @@ checked again until the step itself changes.
 ## Limits
 
 * Only T-SQL steps are supported.
+* Steps can't move to another job. Pointing a first step's `job_id`, or a later step's `previous_step_id`, at another
+  job fails with an error, usually during `terraform plan`. To move steps, use two applies: remove the step resources
+  from the old job first, then add them to the new job. A plan can't tell a chain that moves to another job from a
+  step that is inserted before it, because both make `previous_step_id` unknown until apply.
 * Step changes of one job are serialised within one `terraform apply`. Changing the same job's steps from two applies
   at once, or in SSMS during an apply, isn't protected against.
 * The fork check covers the steps planned together. It doesn't see steps of the same job managed from another

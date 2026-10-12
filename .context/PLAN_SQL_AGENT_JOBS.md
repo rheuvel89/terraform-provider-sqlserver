@@ -73,7 +73,7 @@ resource "sqlserver_agent_job_step" "notify" {
 
 | Attribute | Kind | Notes |
 |---|---|---|
-| `job_id` | Optional+Computed | Set on the first step only. For later steps it is taken from the job GUID in `previous_step_id`. Exactly one of `job_id` / `previous_step_id`. A change to a *different* job is ForceNew (CustomizeDiff); switching between `job_id` and `previous_step_id` within the same job is an in-place move. |
+| `job_id` | Optional+Computed | Set on the first step only. For later steps it is taken from the job GUID in `previous_step_id`. Exactly one of `job_id` / `previous_step_id`. Moving a step to a *different* job is an error (see section 11); switching between `job_id` and `previous_step_id` within the same job is an in-place move. |
 | `previous_step_id` | Optional | Resource ID of the step before this one. Changing it moves the step in place. |
 | `name` | Required, ForceNew | |
 | `step_id` | Computed | current position, read from msdb |
@@ -501,7 +501,7 @@ Implemented on `feature/sql_agent_jobs`. All agent unit and acceptance tests pas
 - **Job description:** `sp_add_job` stores "No description available." when the description is empty, so Create clears it in the same transaction.
 - **Defaults:** `active_end_date` is Optional with a default of `9999-12-31` (not Optional+Computed), and `recurrence_factor` defaults to `1`, in line with the "fall back to the default" choices for `category_name` and `database_name`. `active_start_date` stays Optional+Computed.
 - **Step `command`:** leading and trailing whitespace is ignored when comparing, because `sp_update_jobstep` trims the command but `sp_add_jobstep` doesn't.
-- **Step moves across jobs:** the step is ForceNew when its job changes and both job IDs are known, or when `job_id` comes from a job being created. When the job is only known at apply (a whole chain moving to a new job), Update removes the step from the old job and creates it in the new one.
+- **Steps can't move to another job** (decided after the review, replacing the planned ForceNew). Neither ForceNew nor an in-place move can work: the steps after the first one only know their job through `previous_step_id`, which is unknown at plan time both when a step is inserted before them (they stay) and when the chain moves (they'd follow), and Terraform doesn't allow switching from update to replace during apply. An in-place move doesn't work either, because a step's ID contains its job, so the next step never learns its predecessor moved. Pointing a first step's `job_id` or a later step's `previous_step_id` at another job now fails with an error that explains how to move steps in two applies: at plan time when the IDs are known, otherwise during apply. `TestAccAgentJobStep_Local_MoveToAnotherJob` covers all four cases.
 - **Schedule examples** live in `examples/agent_schedule/schedules.tf` instead of only in section 9; `docs/resources/agent_schedule.md` is built from that file, and `TestAccAgentSchedule_Local_Examples` applies it.
 - **README:** unchanged, as it doesn't list resources; the new resources are listed in `docs/index.md`.
 

@@ -545,3 +545,84 @@ func TestAccAgentJobStep_Local_MoveRepairsJumps(t *testing.T) {
 		},
 	)
 }
+
+func TestAccAgentJobStep_Local_MoveToAnotherJob(t *testing.T) {
+	// Steps can't move between jobs; every way of trying gives the same clear error.
+	config := func(s1Placement, s2Placement, extra string) string {
+		return testAccProviderBlock + `
+          resource "sqlserver_agent_job" "one" {
+            name = "tf_test_step_move_one"
+          }
+          resource "sqlserver_agent_job" "two" {
+            name = "tf_test_step_move_two"
+          }
+          resource "sqlserver_agent_job_step" "t1" {
+            job_id  = sqlserver_agent_job.two.job_id
+            name    = "t1"
+            command = "SELECT 1"
+          }
+          resource "sqlserver_agent_job_step" "s1" {
+            ` + s1Placement + `
+            name    = "s1"
+            command = "SELECT 1"
+          }
+          resource "sqlserver_agent_job_step" "s2" {
+            ` + s2Placement + `
+            name    = "s2"
+            command = "SELECT 2"
+          }` + extra
+	}
+	const (
+		inOne     = "job_id = sqlserver_agent_job.one.job_id"
+		afterS1   = "previous_step_id = sqlserver_agent_job_step.s1.id"
+		moveError = `step "(s1|s2)" can't move from job [0-9A-F-]+ to another job`
+	)
+	newJob := `
+          resource "sqlserver_agent_job" "three" {
+            name = "tf_test_step_move_three"
+          }`
+	newStepInTwo := `
+          resource "sqlserver_agent_job_step" "t2" {
+            previous_step_id = sqlserver_agent_job_step.t1.id
+            name             = "t2"
+            command          = "SELECT 2"
+          }`
+
+	testAccAgentJobStepCase(t,
+		resource.TestStep{
+			Config: config(inOne, afterS1, ""),
+			Check:  testAccCheckAgentJobStepOrderOf(t, "sqlserver_agent_job.one", "s1", "s2"),
+		},
+		resource.TestStep{
+			// The first step points at another existing job: caught at plan time.
+			Config:      config("job_id = sqlserver_agent_job.two.job_id", afterS1, ""),
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile(moveError),
+		},
+		resource.TestStep{
+			// The first step points at a job created in the same apply: caught at plan time.
+			Config:      config("job_id = sqlserver_agent_job.three.job_id", afterS1, newJob),
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile(moveError),
+		},
+		resource.TestStep{
+			// A later step follows an existing step of another job: caught at plan time.
+			Config:      config(inOne, "previous_step_id = sqlserver_agent_job_step.t1.id", ""),
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile(moveError),
+		},
+		resource.TestStep{
+			// A later step follows a new step of another job, whose ID isn't known at plan time: caught during apply.
+			Config:      config(inOne, "previous_step_id = sqlserver_agent_job_step.t2.id", newStepInTwo),
+			ExpectError: regexp.MustCompile(moveError),
+		},
+		resource.TestStep{
+			// Nothing moved; the job still has both steps.
+			Config: config(inOne, afterS1, newStepInTwo),
+			Check: resource.ComposeTestCheckFunc(
+				testAccCheckAgentJobStepOrderOf(t, "sqlserver_agent_job.one", "s1", "s2"),
+				testAccCheckAgentJobStepOrderOf(t, "sqlserver_agent_job.two", "t1", "t2"),
+			),
+		},
+	)
+}

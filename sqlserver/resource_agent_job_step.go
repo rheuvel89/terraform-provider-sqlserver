@@ -231,21 +231,9 @@ func resourceAgentJobStepCustomizeDiff(_ context.Context, diff *schema.ResourceD
 	jobID, previous, known, fromConfig := agentStepPlacement(diff)
 	if diff.Id() != "" {
 		oldJobID, _ := diff.GetChange(agentJobIdProp)
-		switch {
-		case fromConfig && !known:
-			// A new job: the step can only be created in it.
-			if err := diff.ForceNew(agentJobIdProp); err != nil {
-				return err
-			}
-		case known && !strings.EqualFold(oldJobID.(string), jobID):
-			if !fromConfig {
-				if err := diff.SetNew(agentJobIdProp, jobID); err != nil {
-					return err
-				}
-			}
-			if err := diff.ForceNew(agentJobIdProp); err != nil {
-				return err
-			}
+		// job_id from config is only unknown when it refers to a job created in this apply, which is always another job.
+		if (fromConfig && !known) || (known && !strings.EqualFold(oldJobID.(string), jobID)) {
+			return agentStepJobChangeError(name, oldJobID.(string))
 		}
 	} else if known && !fromConfig {
 		if err := diff.SetNew(agentJobIdProp, jobID); err != nil {
@@ -273,6 +261,14 @@ func resourceAgentJobStepCustomizeDiff(_ context.Context, diff *schema.ResourceD
 		}
 	}
 	return nil
+}
+
+// agentStepJobChangeError explains that a step can't move to another job. Terraform can't plan such a move: the
+// steps after the first one only know their job through previous_step_id, which is unknown at plan time both when
+// a step is inserted before them (they stay) and when the chain moves (they would follow).
+func agentStepJobChangeError(name, oldJobID string) error {
+	return fmt.Errorf("step %q can't move from job %s to another job. To move steps, use two applies: first remove the "+
+		"sqlserver_agent_job_step resources from the old job (or from the configuration), then add them to the new job", name, oldJobID)
 }
 
 // agentStepPlacement returns the job of the step and the step it follows, from job_id (first step) or
@@ -618,17 +614,9 @@ func resourceAgentJobStepUpdate(ctx context.Context, data *schema.ResourceData, 
 	if err != nil {
 		return diag.FromErr(err)
 	}
-	oldJobID, _, _ := parseAgentJobStepID(data.Id())
-	if !strings.EqualFold(oldJobID, jobID) {
-		// The step moves to another job, which happens when a whole chain moves: remove it from the old one first.
-		unlockOld := lockAgentJob(oldJobID)
-		err = removeAgentJobStep(ctx, connector, oldJobID, name)
-		unlockOld()
-		if err != nil {
-			return diag.FromErr(errors.Wrapf(err, "unable to remove agent job step [%s] from job [%s]", name, oldJobID))
-		}
-		data.SetId("")
-		return resourceAgentJobStepCreate(ctx, data, meta)
+	// A previous_step_id that wasn't known at plan time can only turn out to be in another job now.
+	if oldJobID, _, _ := parseAgentJobStepID(data.Id()); !strings.EqualFold(oldJobID, jobID) {
+		return diag.FromErr(agentStepJobChangeError(name, oldJobID))
 	}
 
 	unlock := lockAgentJob(jobID)
