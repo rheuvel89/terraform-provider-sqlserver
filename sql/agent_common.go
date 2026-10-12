@@ -53,13 +53,6 @@ func (c *Connector) agentExec(ctx context.Context, command string, args ...inter
 	})
 }
 
-// agentQueryRow is agentExec for commands that return a row, such as the ID of a new object.
-func (c *Connector) agentQueryRow(ctx context.Context, command string, scanner func(*sql.Row) error, args ...interface{}) error {
-	return retryOnDeadlock(ctx, func() error {
-		return c.QueryRowContext(ctx, command, scanner, args...)
-	})
-}
-
 func retryOnDeadlock(ctx context.Context, f func() error) error {
 	var err error
 	for attempt := 1; attempt <= agentDeadlockAttempts; attempt++ {

@@ -111,3 +111,35 @@ const (
 	agentActiveEndTimeProp       = "active_end_time"
 	agentScheduleUidProp         = "schedule_uid"
 )
+
+const (
+	// SQL Server Agent job step properties
+	agentPreviousStepIdProp    = "previous_step_id"
+	agentStepIdProp            = "step_id"
+	agentStepUidProp           = "step_uid"
+	agentCommandProp           = "command"
+	agentDatabaseNameProp      = "database_name"
+	agentDatabaseUserNameProp  = "database_user_name"
+	agentOnSuccessActionProp   = "on_success_action"
+	agentOnSuccessStepNameProp = "on_success_step_name"
+	agentOnFailActionProp      = "on_fail_action"
+	agentOnFailStepNameProp    = "on_fail_step_name"
+	agentHandlesSuccessOfProp  = "handles_success_of"
+	agentHandlesFailureOfProp  = "handles_failure_of"
+	agentRetryAttemptsProp     = "retry_attempts"
+	agentRetryIntervalProp     = "retry_interval"
+	agentOutputFileNameProp    = "output_file_name"
+	agentAppendOutputFileProp  = "append_output_file"
+	agentLogToTableProp        = "log_to_table"
+	agentAppendLogToTableProp  = "append_log_to_table"
+	agentStepOutputHistoryProp = "include_step_output_in_history"
+	agentDefaultStepDatabase   = "master"
+)
+
+// agentStepFlags maps the step's boolean output options to their bits in sysjobsteps.flags.
+var agentStepFlags = map[string]int{
+	agentAppendOutputFileProp:  2,
+	agentStepOutputHistoryProp: 4,
+	agentLogToTableProp:        8,
+	agentAppendLogToTableProp:  16,
+}

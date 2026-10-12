@@ -35,24 +35,26 @@ func (c *Connector) GetAgentJob(ctx context.Context, jobID string) (*model.Agent
 // and returns the new job ID.
 func (c *Connector) CreateAgentJob(ctx context.Context, job *model.AgentJob) (string, error) {
 	var id string
-	err := c.agentQueryRow(ctx,
+	err := c.agentExec(ctx,
 		`SET NOCOUNT ON
          SET XACT_ABORT ON
-         DECLARE @id uniqueidentifier
+         DECLARE @id uniqueidentifier, @rc int
          BEGIN TRANSACTION
-         EXEC [msdb].[dbo].[sp_add_job] @job_name = @name, @enabled = @enabled, @description = @description,
+         EXEC @rc = [msdb].[dbo].[sp_add_job] @job_name = @name, @enabled = @enabled, @description = @description,
               @category_name = @category, @owner_login_name = @owner,
               @notify_level_eventlog = @notifyEventlog, @notify_level_email = @notifyEmail,
               @notify_email_operator_name = @notifyEmailOperator, @delete_level = @deleteLevel, @job_id = @id OUTPUT
+         IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; RETURN END
          -- sp_add_job stores a placeholder text when the description is empty
          IF @description IS NULL
-           EXEC [msdb].[dbo].[sp_update_job] @job_id = @id, @description = N''
-         EXEC [msdb].[dbo].[sp_add_jobserver] @job_id = @id, @server_name = N'(local)'
+         BEGIN
+           EXEC @rc = [msdb].[dbo].[sp_update_job] @job_id = @id, @description = N''
+           IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; RETURN END
+         END
+         EXEC @rc = [msdb].[dbo].[sp_add_jobserver] @job_id = @id, @server_name = N'(local)'
+         IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; RETURN END
          COMMIT TRANSACTION
-         SELECT CONVERT(nvarchar(36), @id)`,
-		func(r *sql.Row) error {
-			return r.Scan(&id)
-		},
+         SET @newId = CONVERT(nvarchar(36), @id)`,
 		sql.Named("name", job.Name),
 		sql.Named("enabled", job.Enabled),
 		sql.Named("description", nullIfEmpty(job.Description)),
@@ -62,6 +64,7 @@ func (c *Connector) CreateAgentJob(ctx context.Context, job *model.AgentJob) (st
 		sql.Named("notifyEmail", job.NotifyLevelEmail),
 		sql.Named("notifyEmailOperator", nullIfEmpty(job.NotifyEmailOperatorName)),
 		sql.Named("deleteLevel", job.DeleteLevel),
+		sql.Named("newId", sql.Out{Dest: &id}),
 	)
 	return id, err
 }

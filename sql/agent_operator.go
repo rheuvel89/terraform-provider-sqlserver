@@ -29,20 +29,20 @@ func (c *Connector) GetAgentOperator(ctx context.Context, operatorID int) (*mode
 
 func (c *Connector) CreateAgentOperator(ctx context.Context, op *model.AgentOperator) (int, error) {
 	var id int
-	err := c.agentQueryRow(ctx,
+	err := c.agentExec(ctx,
 		`SET NOCOUNT ON
          SET XACT_ABORT ON
+         DECLARE @rc int
          BEGIN TRANSACTION
-         EXEC [msdb].[dbo].[sp_add_operator] @name = @name, @enabled = @enabled, @email_address = @email, @category_name = @category
-         SELECT [id] FROM [msdb].[dbo].[sysoperators] WHERE [name] = @name
+         EXEC @rc = [msdb].[dbo].[sp_add_operator] @name = @name, @enabled = @enabled, @email_address = @email, @category_name = @category
+         IF @rc <> 0 BEGIN ROLLBACK TRANSACTION; RETURN END
+         SELECT @newId = [id] FROM [msdb].[dbo].[sysoperators] WHERE [name] = @name
          COMMIT TRANSACTION`,
-		func(r *sql.Row) error {
-			return r.Scan(&id)
-		},
 		sql.Named("name", op.Name),
 		sql.Named("enabled", op.Enabled),
 		sql.Named("email", nullIfEmpty(op.EmailAddress)),
 		sql.Named("category", nullIfEmpty(op.CategoryName)),
+		sql.Named("newId", sql.Out{Dest: &id}),
 	)
 	return id, err
 }

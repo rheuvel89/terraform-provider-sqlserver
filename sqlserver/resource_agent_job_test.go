@@ -188,3 +188,26 @@ func testAccCheckAgentJobExists(resource string) resource.TestCheckFunc {
 		return nil
 	})
 }
+
+func TestAccAgentJob_Local_DuplicateName(t *testing.T) {
+	// A failing msdb procedure must surface SQL Server's error rather than an empty job ID.
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      func(state *terraform.State) error { return testAccCheckAgentJobDestroy(state) },
+		Steps: []resource.TestStep{
+			{
+				Config: testAccProviderBlock + `
+                  resource "sqlserver_agent_job" "first" {
+                    name = "tf_test_job_duplicate"
+                  }
+                  resource "sqlserver_agent_job" "second" {
+                    name       = "tf_test_job_duplicate"
+                    depends_on = [sqlserver_agent_job.first]
+                  }`,
+				ExpectError: regexp.MustCompile(`The specified @name \('tf_test_job_duplicate'\) already exists`),
+			},
+		},
+	})
+}

@@ -33,20 +33,15 @@ func (c *Connector) GetAgentSchedule(ctx context.Context, scheduleID int) (*mode
 // CreateAgentSchedule creates the schedule and returns its ID. A zero active start date lets SQL Server use today.
 func (c *Connector) CreateAgentSchedule(ctx context.Context, s *model.AgentSchedule) (int, error) {
 	var id int
-	err := c.agentQueryRow(ctx,
+	err := c.agentExec(ctx,
 		`SET NOCOUNT ON
-         DECLARE @id int
          EXEC [msdb].[dbo].[sp_add_schedule] @schedule_name = @name, @enabled = @enabled,
               @freq_type = @freqType, @freq_interval = @freqInterval, @freq_subday_type = @subdayType,
               @freq_subday_interval = @subdayInterval, @freq_relative_interval = @relativeInterval,
               @freq_recurrence_factor = @recurrenceFactor, @active_start_date = @startDate, @active_end_date = @endDate,
               @active_start_time = @startTime, @active_end_time = @endTime, @owner_login_name = @owner,
-              @schedule_id = @id OUTPUT
-         SELECT @id`,
-		func(r *sql.Row) error {
-			return r.Scan(&id)
-		},
-		agentScheduleArgs(s)...,
+              @schedule_id = @newId OUTPUT`,
+		append(agentScheduleArgs(s), sql.Named("newId", sql.Out{Dest: &id}))...,
 	)
 	return id, err
 }
