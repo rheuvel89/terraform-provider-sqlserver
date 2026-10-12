@@ -18,7 +18,7 @@ Goal: add create/read/update/delete support for SQL Server Agent jobs, job steps
 | Subsystems | **TSQL only**. `subsystem` is not exposed and is always `TSQL`. |
 | Schedule syntax | Friendly attributes, translated to and from the msdb integers. |
 | Notifications | Email to an operator, event log, and auto-delete on the job. Pager and net send are left out because they're deprecated. |
-| Categories | `category_name` referencing an existing category only. |
+| Categories | `category_name` referencing an existing category only, defaulting to the built-in uncategorized category so that removing it from config reverts the server. |
 | Platforms | On-prem/VM and Azure SQL Managed Instance. Azure SQL Database fails fast with a clear error. |
 | Import | Not supported. |
 
@@ -32,7 +32,7 @@ ID: `sqlserver://host:port/agent_job/<job_id GUID>`
 | `name` | Required | Updated in place via `sp_update_job @new_name` (the ID is the GUID, so renames don't recreate the job) |
 | `description` | Optional | default `""` |
 | `enabled` | Optional | default `true` |
-| `category_name` | Optional+Computed | server default `[Uncategorized (Local)]` |
+| `category_name` | Optional | default `[Uncategorized (Local)]`; removing it from config moves the job back to that category |
 | `owner_login_name` | Optional+Computed | defaults to the connecting login |
 | `notify_level_eventlog` | Optional | `never \| on_success \| on_failure \| always`, default `on_failure` (SQL default 2) |
 | `notify_level_email` | Optional | same enum, default `never` |
@@ -171,7 +171,7 @@ ID: `sqlserver://host:port/agent_job/<job_id>/agent_schedule/<schedule_id>`
 ### `sqlserver_agent_operator`
 ID: `sqlserver://host:port/agent_operator/<id>`
 
-- **Attributes:** `name` (updated in place via `@new_name`), `enabled` (default true), `email_address`, `category_name` (Optional+Computed), and computed `operator_id`.
+- **Attributes:** `name` (updated in place via `@new_name`), `enabled` (default true), `email_address`, `category_name` (Optional, default `[Uncategorized]`, so removing it from config moves the operator back), and computed `operator_id`.
 - **CRUD:** `sp_add_operator` / `sp_update_operator` / `sp_delete_operator`.
 - **Ordering:** Database Mail isn't needed to create an operator. A job that references `sqlserver_agent_operator.x.name` creates the right dependency ordering.
 
@@ -204,7 +204,7 @@ ID: `sqlserver://host:port/agent_operator/<id>`
   - the jump snapshot/rewrite after an insert, a delete and a move, and the forward/backward classification;
   - the plan registry: each row of the table above, re-registration of the same step, and unknown values being skipped.
 - **Acceptance tests** (`TestAccAgent*_Local_*`, using `templateToString`, Exists and Destroy checks):
-  1. Job: basic, then update (rename, enabled, description, category), then destroy.
+  1. Job: basic, then update (rename, enabled, description, category), then remove `category_name` and assert the job is back in `[Uncategorized (Local)]` with an empty plan, then destroy.
   2. Steps (chain):
      - three chained steps are created in the right order in one apply;
      - insert a step in the middle; delete a middle step; move a step to the head. Each converges in one apply with an empty plan afterwards;
@@ -256,3 +256,4 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 - Operator pager and net-send fields are left out because they're deprecated.
 - `on_success_action` defaults to `go_to_next_step`, matching SSMS rather than `sp_add_jobstep`'s `quit_with_success`.
 - Removing a forward jump resets the source to the default action rather than to whatever it was before.
+- `category_name` on the job and operator is Optional with the built-in uncategorized category as its default, not Optional+Computed, so that removing it from config reverts the server and changes made outside Terraform show up as drift.
