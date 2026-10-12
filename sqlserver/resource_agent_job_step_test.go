@@ -378,4 +378,16 @@ func TestAccAgentJobStep_Local_RunAsNonSysadmin(t *testing.T) {
 			ExpectError: regexp.MustCompile(`the login the provider connects with isn't sysadmin`),
 		},
 	)
+	asNonSysadmin := func(extra string) string {
+		return strings.Replace(testAccAgentJobStepsConfig("tf_test_step_caller_update", testStep{"s", "", extra}),
+			testAccProviderBlock, nonSysadminProvider, 1)
+	}
+	testAccAgentJobStepCase(t,
+		resource.TestStep{Config: asNonSysadmin("")},
+		resource.TestStep{
+			// On update sp_update_jobstep would silently drop the value instead of failing.
+			Config:      asNonSysadmin(`database_user_name = "dbo"`),
+			ExpectError: regexp.MustCompile(`the login the provider connects with isn't sysadmin`),
+		},
+	)
 }

@@ -199,3 +199,25 @@ func TestAgentPlanRegistry(t *testing.T) {
 		t.Fatalf("claims of different jobs don't clash: %v", err)
 	}
 }
+
+func TestAgentStepFlags(t *testing.T) {
+	// The bits documented for sp_add_jobstep's @flags.
+	want := map[string]int{
+		"append_output_file":             2,
+		"include_step_output_in_history": 4,
+		"log_to_table":                   8,
+		"append_log_to_table":            16,
+	}
+	if !reflect.DeepEqual(agentStepFlags, want) {
+		t.Fatalf("got %v, want %v", agentStepFlags, want)
+	}
+	data := resourceAgentJobStep().TestResourceData()
+	for prop := range want {
+		if err := data.Set(prop, prop == "log_to_table" || prop == "include_step_output_in_history"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := agentStepFlagsFromData(data); got != 12 {
+		t.Fatalf("log_to_table + include_step_output_in_history: got flags %d, want 12", got)
+	}
+}

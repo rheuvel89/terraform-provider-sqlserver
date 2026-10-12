@@ -634,10 +634,8 @@ func resourceAgentJobStepUpdate(ctx context.Context, data *schema.ResourceData, 
 	unlock := lockAgentJob(jobID)
 	defer unlock()
 
-	if data.HasChange(agentDatabaseUserNameProp) || data.HasChange(agentDatabaseNameProp) {
-		if err = checkAgentStepRunAs(ctx, connector, data, jobID); err != nil {
-			return diag.FromErr(err)
-		}
+	if err = checkAgentStepRunAs(ctx, connector, data, jobID); err != nil {
+		return diag.FromErr(err)
 	}
 
 	steps, err := connector.ListAgentJobSteps(ctx, jobID)
