@@ -18,7 +18,7 @@ resource "docker_container" "mssql" {
     internal = 1433
     external = 1433
   }
-  env = ["ACCEPT_EULA=Y", "SA_PASSWORD=${local.local_password}"]
+  env = ["ACCEPT_EULA=Y", "SA_PASSWORD=${local.local_password}", "MSSQL_AGENT_ENABLED=true"]
 }
 
 

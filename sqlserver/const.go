@@ -64,3 +64,25 @@ const (
 	compatibilityLevelProp = "compatibility_level"
 	ownerProp              = "owner"
 )
+
+const (
+	// SQL Server Agent properties
+	agentNameProp          = "name"
+	agentEnabledProp       = "enabled"
+	agentCategoryNameProp  = "category_name"
+	agentOwnerLoginProp    = "owner_login_name"
+	agentDescriptionProp   = "description"
+	agentJobIdProp         = "job_id"
+	agentScheduleIdProp    = "schedule_id"
+	agentOperatorIdProp    = "operator_id"
+	agentEmailAddressProp  = "email_address"
+	agentStartStepIdProp   = "start_step_id"
+	agentNotifyEventlog    = "notify_level_eventlog"
+	agentNotifyEmail       = "notify_level_email"
+	agentNotifyEmailOpProp = "notify_email_operator_name"
+	agentDeleteLevelProp   = "delete_level"
+
+	// Built-in categories used as defaults
+	agentJobDefaultCategory      = "[Uncategorized (Local)]"
+	agentOperatorDefaultCategory = "[Uncategorized]"
+)

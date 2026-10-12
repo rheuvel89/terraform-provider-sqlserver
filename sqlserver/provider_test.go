@@ -65,6 +65,8 @@ type TestConnector interface {
 	GetDatabase(name string) (*model.Database, error)
 	GetSystemUser() (string, error)
 	GetCurrentUser(database string) (string, string, error)
+	GetAgentOperator(operatorID int) (*model.AgentOperator, error)
+	ExecContext(command string, args ...interface{}) error
 }
 
 type testConnector struct {
@@ -209,6 +211,14 @@ func (t testConnector) GetUser(database, name string) (*model.User, error) {
 
 func (t testConnector) GetDatabase(name string) (*model.Database, error) {
 	return t.c.(DatabaseConnector).GetDatabase(context.Background(), name)
+}
+
+func (t testConnector) GetAgentOperator(operatorID int) (*model.AgentOperator, error) {
+	return t.c.(AgentOperatorConnector).GetAgentOperator(context.Background(), operatorID)
+}
+
+func (t testConnector) ExecContext(command string, args ...interface{}) error {
+	return t.c.(*sql.Connector).ExecContext(context.Background(), command, args...)
 }
 
 func (t testConnector) GetSystemUser() (string, error) {
