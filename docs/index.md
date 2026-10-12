@@ -69,6 +69,11 @@ The following resources are available:
 * [sqlserver_workload_group](resources/workload_group.md) - Manages Resource Governor workload groups
 * [sqlserver_classifier_function](resources/classifier_function.md) - Manages Resource Governor classifier functions
 * [sqlserver_resource_governor](resources/resource_governor.md) - Manages Resource Governor configuration
+* [sqlserver_agent_job](resources/agent_job.md) - Manages SQL Server Agent jobs
+* [sqlserver_agent_job_step](resources/agent_job_step.md) - Manages the T-SQL steps of SQL Server Agent jobs
+* [sqlserver_agent_schedule](resources/agent_schedule.md) - Manages SQL Server Agent schedules
+* [sqlserver_agent_job_schedule](resources/agent_job_schedule.md) - Attaches schedules to SQL Server Agent jobs
+* [sqlserver_agent_operator](resources/agent_operator.md) - Manages SQL Server Agent operators for job notifications
 
 ## Examples
 
@@ -78,3 +83,5 @@ Complete examples can be found in the `examples/` directory:
 * `examples/azure/` - Azure SQL Database with Azure AD authentication
 * `examples/fedauth/` - Federated authentication examples
 * `examples/resource_governor/` - Resource Governor configuration with pools and workload groups
+* `examples/agent_job/` - A SQL Server Agent job with chained steps, a failure step, a shared schedule and email notification
+* `examples/agent_schedule/` - Common SQL Server Agent schedules
