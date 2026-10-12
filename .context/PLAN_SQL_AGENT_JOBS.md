@@ -181,6 +181,7 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 - **Attributes:** `name` (updated in place via `@new_name`), `enabled` (default true), `email_address`, `category_name` (Optional, default `[Uncategorized]`, so removing it from config moves the operator back), and computed `operator_id`.
 - **CRUD:** `sp_add_operator` / `sp_update_operator` / `sp_delete_operator`.
 - **Ordering:** Database Mail isn't needed to create an operator. A job that references `sqlserver_agent_operator.x.name` creates the right dependency ordering.
+- **Mail delivery is out of scope:** the operator only stores the address. Mail is sent by Database Mail through the profile SQL Agent is configured with, which this provider doesn't manage (see section 8). The provider doesn't check that Database Mail is set up; this is documented instead.
 
 ## 3. Code layout (following the existing layering)
 
@@ -242,7 +243,13 @@ ID: `sqlserver://host:port/agent_operator/<id>`
   - when to use `master` vs. a user database for `database_name`, and referencing `sqlserver_database.x.name` so the step depends on the database;
   - the chain (`job_id` on the first step, `previous_step_id` on the rest), that it can't fork, and the plan-time check with its limits;
   - the jump rule (declared on the later step), with an example of each direction;
-  - that the step lock only covers a single apply.
+  - that the step lock only covers a single apply;
+  - email notifications (in `agent_operator.md`, linked from `notify_level_email` in `agent_job.md`): an operator only stores the address and mail is sent by Database Mail, which must be set up separately:
+    - `Database Mail XPs` enabled, plus an SMTP account and a profile containing it;
+    - on-prem/VM: SQL Agent's mail profile selected under Agent properties → Alert System, followed by an Agent restart;
+    - Azure SQL Managed Instance: Agent always uses the profile named exactly `AzureManagedInstance_dbmail_profile`, there's no local SMTP relay so an external SMTP service is needed (port 587 with TLS, as port 25 is generally blocked), and the MI subnet's NSG/route table must allow outbound traffic to the SMTP host;
+    - a minimal T-SQL setup snippet for MI (`sp_configure`, `sysmail_add_account_sp`, `sysmail_add_profile_sp`, `sysmail_add_profileaccount_sp`);
+    - troubleshooting via `msdb.dbo.sysmail_allitems`, `msdb.dbo.sysmail_event_log` and the Agent error log.
 
 ## 6. Implementation order
 1. **Spike:** run the Docker image with the agent enabled and confirm by hand:
@@ -271,3 +278,6 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 - Removing a forward jump resets the source to the default action rather than to whatever it was before.
 - `category_name` on the job and operator is Optional with the built-in uncategorized category as its default, not Optional+Computed, so that removing it from config reverts the server and changes made outside Terraform show up as drift. The same applies to the step's `database_name` (default `master`).
 - `database_user_name` on a non-sysadmin-owned job is an apply-time error from the provider rather than left to SQL Server.
+
+## 8. Follow-ups (out of scope for this plan)
+- **Database Mail resources:** e.g. `sqlserver_database_mail_account` (SMTP server, port, SSL, credentials, with the password as a write-only argument like `password_wo` on `sqlserver_login`) and `sqlserver_database_mail_profile` (accounts with sequence numbers). On MI the profile would be named `AzureManagedInstance_dbmail_profile` so Agent uses it. Until then, Database Mail is configured outside Terraform and only documented here.
