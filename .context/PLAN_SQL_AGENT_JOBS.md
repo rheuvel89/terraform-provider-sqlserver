@@ -79,7 +79,7 @@ resource "sqlserver_agent_job_step" "notify" {
 | `step_id` | Computed | current position, read from msdb |
 | `command` | Required | T-SQL |
 | `database_name` | Optional | default `master`; removing it from config moves the step back to `master`. Not a ForceNew: changed in place via `sp_update_jobstep`. |
-| `database_user_name` | Optional | the step runs as `EXECUTE AS USER` for this user in `database_name`. Only allowed when the job owner is sysadmin (see **Run-as** below). |
+| `database_user_name` | Optional | the step runs as `EXECUTE AS USER` for this user in `database_name`. Only allowed when both the job owner and the login Terraform connects with are sysadmin (see **Run-as** below). |
 | `on_success_action` | Optional | `quit_with_success \| quit_with_failure \| go_to_next_step \| go_to_step`, default `go_to_next_step` (as in SSMS) |
 | `on_success_step_name` | Optional | required iff action = `go_to_step`; **must be an earlier step** |
 | `on_fail_action` | Optional | default `quit_with_failure` |
@@ -96,6 +96,7 @@ resource "sqlserver_agent_job_step" "notify" {
 - **Read:** look the step up by name in `msdb.dbo.sysjobsteps`. Set `step_id`, and set `previous_step_id` to the ID of the step currently in front of it (or clear it and set `job_id` when it's step 1), so out-of-band reordering shows as drift. If the job or step is gone, clear the ID.
 - **Move (`previous_step_id` changed):** take the lock, `sp_delete_jobstep`, then `sp_add_jobstep` at the new position with the full settings from config (the `step_uid` changes, which is fine). Because positions are always resolved from names at apply time, inserting or deleting a middle step converges in one apply whichever order Terraform runs the operations in.
 - **Delete:** take the lock, then `sp_delete_jobstep`.
+- **Never pass `@step_id = 0` (or a negative number) to `sp_delete_jobstep`:** `0` deletes **every** step of the job (spike result S1). The by-name lookup returns an error when the step isn't found instead of a zero value, and the delete helper refuses any `step_id < 1`.
 - **Steps are always addressed by name.** The `step_id` in state is never used to target a write; the current number is looked up under the lock.
 - **No forks:** two steps naming the same previous step (or two head steps) is always an error, caught at plan time by the plan registry below.
 
@@ -104,19 +105,20 @@ resource "sqlserver_agent_job_step" "notify" {
 - **Forward (target-owned):** on Create/Update of the target, for each listed source: `sp_update_jobstep` with `on_*_action = 4` (go to step) and `on_*_step_id` = the target's number.
   - Sources removed from the list, and all sources when the target is deleted, are reset to the default action (`quit_with_failure` for failure, `go_to_next_step` for success), but only if they still point at this target.
   - **Read** lists every step whose `on_*_step_id` points at this step and sets `handles_*_of` from it.
-- **Source side of a forward jump:** when a step reads an `on_*_action` that jumps to a *later* step, that jump belongs to the target, so Read leaves the source's `on_*_action` / `on_*_step_name` at their prior state values. Create/Update of a step only sends **changed** parameters to `sp_update_jobstep`, so editing the source's `command` never clears a forward jump.
+- **Source side of a forward jump:** when a step reads an `on_*_action` that jumps to a *later* step, that jump belongs to the target, so Read leaves the source's `on_*_action` / `on_*_step_name` at their prior state values. Create/Update of a step only sends **changed** parameters to `sp_update_jobstep`, so editing the source's `command` never clears a forward jump. `sp_update_jobstep` keeps the current value for any parameter passed as `NULL` (spike result S3), so to **clear** an optional string (`database_user_name`, `output_file_name`) the provider passes `N''`, which the procedure turns into `NULL`. For `database_name`, `N''` falls back to `master`.
 - **Conflicts:**
   - two targets claim the same source for the same outcome: **plan-time** error from the plan registry;
   - a source listed in `handles_*_of` already has a non-default action of that kind set in its own config: apply-time error, raised by the later step, which always applies after the earlier one;
   - `on_*_step_name` points at a later step: apply-time error (positions are only known once the chain exists).
-- **Renumbering:** before every insert, delete or move (under the lock) the provider snapshots all jumps in the job as source name → target name; afterwards it rewrites every `on_*_step_id` that no longer matches. This holds whatever msdb itself does on renumbering (see the spike).
+- **Renumbering:** before every insert, delete or move (under the lock) the provider snapshots all jumps in the job as source name → target name; afterwards it rewrites every `on_*_step_id` that no longer matches. Spike result S1 shows this is **required**, not just defensive: `sp_add_jobstep` renumbers jumps correctly, but `sp_delete_jobstep` renumbers first and then resets jumps that point at the deleted number, so a jump to the step *right after* the deleted one is wrongly reset to "quit with success/failure". Jumps that pointed at the deleted step itself are also reset; the rewrite sets those to this provider's defaults (`go_to_next_step` / `quit_with_failure`) as described above, rather than msdb's `quit_with_success` for success.
 - **Documented limits:** a step can't jump to itself.
 
 **Run-as (`database_user_name`)**
-- Empty: SQL Server's own rules apply. With a sysadmin job owner the step runs as the SQL Agent service account; with a non-sysadmin owner it runs as the owner. It never uses the login Terraform connects with, unless that login is the owner.
-- Set: on Create/Update, under the job lock and before `sp_add_jobstep` / `sp_update_jobstep`, the provider reads the job's current owner from `msdb.dbo.sysjobs` and checks `IS_SRVROLEMEMBER('sysadmin', <owner>) = 1`. If not, apply fails with e.g. `step "load" sets database_user_name, but job "nightly_etl" is owned by "etl_owner", which is not sysadmin; SQL Server only honours database_user_name for sysadmin-owned jobs. Remove database_user_name or make the owner sysadmin.` This replaces SQL Server's own, less clear error or silent ignore.
+- Empty: SQL Server's own rules apply. With a sysadmin job owner the step runs as the SQL Agent service account; with a non-sysadmin owner it runs as the owner. It never uses the login Terraform connects with, unless that login is the owner. (Confirmed in spike result S3b.)
+- Set: on Create/Update, under the job lock and before `sp_add_jobstep` / `sp_update_jobstep`, the provider reads the job's current owner from `msdb.dbo.sysjobs` and checks `IS_SRVROLEMEMBER('sysadmin', <owner>) = 1`. If not, apply fails with e.g. `step "load" sets database_user_name, but job "nightly_etl" is owned by "etl_owner", which is not sysadmin; SQL Server only honours database_user_name for sysadmin-owned jobs. Remove database_user_name or make the owner sysadmin.` This replaces SQL Server's silent ignore: a non-sysadmin owner's step runs as the owner even when `database_user_name` is stored (spike result S3b).
+- Set, second check: the login Terraform connects with must also be sysadmin (`IS_SRVROLEMEMBER('sysadmin') = 1`). Otherwise `sp_add_jobstep` fails with "Only a sysadmin can specify '@database_user_name' parameter", but `sp_update_jobstep` silently drops the value without an error, which would show up as permanent drift. The provider raises the same kind of clear error for both.
 - The check runs at apply time, not plan time, because the owner may be unknown at plan (it defaults to the connecting login) and its role membership can only be read from the server.
-- The check doesn't verify that the user exists in `database_name`; SQL Server's own error from `sp_add_jobstep` / at run time covers that.
+- The provider doesn't check that the user exists in `database_name`: SQL Server already does that in `sp_add_jobstep` / `sp_update_jobstep` for SQL users ("The specified @database_user_name ('x') does not exist"). Windows names (containing `\`) aren't checked by SQL Server until the job runs.
 - Changing the job's `owner_login_name` to a non-sysadmin while a step still sets `database_user_name` isn't caught: the job resource doesn't know about its steps, and the step only re-checks when it is itself created or updated. This is documented rather than checked.
 
 **Plan registry (chain validation)**
@@ -136,6 +138,7 @@ resource "sqlserver_agent_job_step" "notify" {
   | Two head steps | `(head) → a` and `(head) → b` | error at plan |
 
 - When `previous_step_id` or the job GUID is still unknown at plan time (a brand-new chain), the check is skipped. Terraform plans each resource again just before applying it, with known values, so the same check then fails during apply instead.
+- **Plan and apply run in different provider processes** (spike result S7): `terraform plan` plans every resource, changed or not, in one process, but `terraform apply` re-plans only the resources that change, in a new process. So during apply the registry only holds claims from changed steps. That's enough for the case above: a step whose `previous_step_id` is unknown at plan follows a new step, so it can only fork with other new (and so re-planned) steps. Because each step is re-planned just before it's applied, the failing step's sibling may already have been created when the error appears; the next plan then shows the fork at plan time.
 - **Limits (documented):** the registry is per provider process, so steps of one job managed from two Terraform configurations or two provider aliases aren't checked against each other; `-target` plans can miss a fork, which then shows up as permanent drift rather than a false error.
 
 **Per-job lock**
@@ -154,17 +157,17 @@ ID: `sqlserver://host:port/agent_schedule/<schedule_id>`. msdb doesn't require s
 | `frequency_type` | `once \| daily \| weekly \| monthly \| monthly_relative \| agent_start \| idle` → 1/4/8/16/32/64/128 |
 | `recurrence_factor` | "every N days/weeks/months". For `daily` it maps to `freq_interval`, otherwise to `freq_recurrence_factor` |
 | `weekly_days` | set of `sunday…saturday` → bitmask 1, 2, 4 … 64 |
-| `monthly_day` | 1–31. Values 29–31 give a plan-time **warning** (not an error) that the day doesn't exist in every month, pointing at `monthly_relative_week = "last"` + `monthly_relative_day = "day"` for the last day of the month. The wording follows the spike's finding on what Agent does in shorter months. |
+| `monthly_day` | 1–31. Values 29–31 give a plan-time **warning** (not an error) that the day doesn't exist in every month, pointing at `monthly_relative_week = "last"` + `monthly_relative_day = "day"` for the last day of the month. Wording (spike result S5): `SQL Agent skips months without day 31 (Feb, Apr, Jun, Sep, Nov); use ... for the last day of the month`, adjusted per value (day 29 only runs in February in leap years). |
 | `monthly_relative_week` | `first \| second \| third \| fourth \| last` → 1/2/4/8/16 |
 | `monthly_relative_day` | `sunday…saturday \| day \| weekday \| weekend_day` → 1–10 |
 | `subday_type` / `subday_interval` | `once \| seconds \| minutes \| hours` → 1/2/4/8. `subday_type` defaults to `once` (run once a day at `active_start_time`). `subday_interval` is required for `seconds`/`minutes`/`hours` and forbidden for `once`; for `seconds` it must be at least 10 (SQL Agent's minimum), checked at plan time. |
-| `active_start_date` / `active_end_date` | `YYYY-MM-DD` ↔ `yyyymmdd` int; Optional+Computed (defaults are today and `9999-12-31`). Parsed at plan time with Go's `time.Parse` (layout `2006-01-02`), not just a pattern match, so `2026-02-30` or `2026-13-01` fail at plan instead of with a vague SQL Server error at apply. For "every N" schedules (`recurrence_factor` > 1) the start date anchors the cycle, so the docs tell users to set it explicitly. |
-| `active_start_time` / `active_end_time` | `HH:MM:SS` ↔ `hhmmss` int; defaults `00:00:00` / `23:59:59`. Parsed at plan time with `time.Parse` (layout `15:04:05`), so `24:00:00` or `12:61:00` fail at plan. No check that the end time is after the start time until the spike shows whether SQL Server allows a window that crosses midnight. |
+| `active_start_date` / `active_end_date` | `YYYY-MM-DD` ↔ `yyyymmdd` int; Optional+Computed (defaults are today and `9999-12-31`). Parsed at plan time with Go's `time.Parse` (layout `2006-01-02`), not just a pattern match, so `2026-02-30` or `2026-13-01` fail at plan instead of with a vague SQL Server error at apply (S6: SQL Server only says `valid values are: 19900101..99991231`). Dates before `1990-01-01` are rejected too, matching SQL Server's range. For "every N" schedules (`recurrence_factor` > 1) the start date anchors the cycle, so the docs tell users to set it explicitly. |
+| `active_start_time` / `active_end_time` | `HH:MM:SS` ↔ `hhmmss` int; defaults `00:00:00` / `23:59:59`. Parsed at plan time with `time.Parse` (layout `15:04:05`), so `24:00:00` or `12:61:00` fail at plan. An end time **earlier** than the start time is allowed: SQL Server treats it as a window that crosses midnight (spike result S6). An end time **equal** to the start time with a `seconds`/`minutes`/`hours` `subday_type` is a plan-time error, as SQL Server rejects it. `active_end_time = "00:00:00"` is a plan-time error with a hint to use `23:59:59`: SQL Server treats `0` as "not set" and stores `23:59:59`, which would be permanent drift. |
 | `owner_login_name` | Optional+Computed |
 | `schedule_id`, `schedule_uid` | Computed |
 
 - A **CustomizeDiff** checks that only the fields relevant to the chosen `frequency_type` are set (for example, `weekly_days` is required for `weekly` and forbidden otherwise), and the `subday_*` rules above (`subday_type` doesn't apply to `once`, `agent_start` and `idle`). It also fails the plan when `active_end_date` is before `active_start_date` (when both are known at plan time).
-- **Plan-time checks vs. warnings:** dates, times, the end-date order and the `subday_*` rules are errors; `monthly_day` 29–31 is a warning (`ValidateDiagFunc` returning `diag.Warning`, since SDK v2's CustomizeDiff can't emit warnings). Daylight saving time isn't checked: a time like 02:15 is valid on almost every day of the year, and the provider doesn't know the server's time zone at plan time. It's documented instead.
+- **Plan-time checks vs. warnings:** dates (including the 1990-01-01 lower bound), times, the end-date order, equal start/end times with a sub-day interval, an end time of `00:00:00`, and the `subday_*` rules are errors; `monthly_day` 29–31 is a warning (`ValidateDiagFunc` returning `diag.Warning`, since SDK v2's CustomizeDiff can't emit warnings). Daylight saving time isn't checked: a time like 02:15 is valid on almost every day of the year, and the provider doesn't know the server's time zone at plan time. It's documented instead.
 - **CRUD:** `sp_add_schedule` / `sp_update_schedule` / `sp_delete_schedule @force_delete = 0`. Terraform destroys the attachments first, so `force_delete` isn't needed.
 
 ### `sqlserver_agent_job_schedule` (attachment)
@@ -210,8 +213,9 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 ## 4. Tests
 - **Unit tests** (table-driven, like `sql/resource_governor_test.go`):
   - the schedule encoding round-trips (every frequency type, bitmask edges, `last`/`weekend_day`, the time and date formats) and the step `flags` mapping;
-  - the date/time validators: `2026-02-30`, `2026-13-01`, `2025-02-29`, `24:00:00`, `12:61:00` and malformed strings are rejected; `2028-02-29` and `23:59:59` are accepted; the `monthly_day` warning fires for 29–31 only;
-  - the jump snapshot/rewrite after an insert, a delete and a move, and the forward/backward classification;
+  - the date/time validators: `2026-02-30`, `2026-13-01`, `2025-02-29`, `1989-12-31`, `24:00:00`, `12:61:00` and malformed strings are rejected; `2028-02-29` and `23:59:59` are accepted; an end time of `00:00:00` and equal start/end times with a sub-day interval are rejected; an end time earlier than the start time is accepted; the `monthly_day` warning fires for 29–31 only;
+  - the jump snapshot/rewrite after an insert, a delete and a move, and the forward/backward classification; include the S1 case of deleting step *n* while a jump points at step *n+1*;
+  - the delete helper refuses `step_id < 1`;
   - the plan registry: each row of the table above, re-registration of the same step, and unknown values being skipped.
 - **Acceptance tests** (`TestAccAgent*_Local_*`, using `templateToString`, Exists and Destroy checks):
   1. Job: basic, then update (rename, enabled, description, category), then remove `category_name` and assert the job is back in `[Uncategorized (Local)]` with an empty plan, then destroy.
@@ -225,12 +229,14 @@ ID: `sqlserver://host:port/agent_operator/<id>`
      - a backward jump via `on_fail_step_name`;
      - a forward jump via `handles_failure_of`, created in one apply with an empty plan afterwards;
      - the jump survives an insert before its target (renumbering);
+     - the jump survives deleting the step directly before its target (the `sp_delete_jobstep` bug from spike result S1);
      - changing the source's `command` keeps the forward jump; removing the target resets the source to the default action;
      - the conflict errors: double claim (at plan), forward `on_*_step_name` and a source with its own non-default action (at apply).
   4. Step run-as and database:
      - `database_name` set to a user database, then removed from config: the step is back in `master` with an empty plan afterwards;
-     - `database_user_name` with a sysadmin owner applies and reads back unchanged;
-     - `database_user_name` on a job owned by a non-sysadmin login fails at apply with the run-as error (`ExpectError`).
+     - `database_user_name` with a sysadmin owner applies and reads back unchanged; removing it from config clears it (sent as `N''`) with an empty plan afterwards;
+     - `database_user_name` on a job owned by a non-sysadmin login fails at apply with the run-as error (`ExpectError`);
+     - `database_user_name` set while connected as a non-sysadmin login fails at apply with the caller error, both on create and on update (`ExpectError`).
   5. Schedule: one case per `frequency_type`, checking the friendly values read back unchanged and that the plan is empty afterwards. The cases are taken from the examples in section 9 so the documented examples are known to work. Also: `subday_type` omitted reads back as `once` with an empty plan, and `subday_interval < 10` with `seconds` fails at plan (`ExpectError`); an impossible date such as `2026-02-30` and an `active_end_date` before `active_start_date` both fail at plan (`ExpectError`).
   6. Attachment: attach and detach. Assert the schedule **still exists** after the job is destroyed (this covers the `@delete_unused_schedule = 0` fix).
   7. Operator plus a job with `notify_level_email = on_failure`.
@@ -251,10 +257,10 @@ ID: `sqlserver://host:port/agent_operator/<id>`
     - times are in the server's local time zone; on Managed Instance that's the instance time zone chosen at creation (UTC by default, can't be changed later);
     - for "every N days/weeks/months" schedules, `active_start_date` decides which days count, and defaults to the day of the apply, so set it explicitly (examples 2, 5 and 9);
     - `subday_type` defaults to `once`, and the 10-second minimum for `seconds`;
-    - `monthly_day = 31` vs. `monthly_relative_week = "last"` + `monthly_relative_day = "day"` for the last day of the month, what Agent does with day 29–31 in shorter months (from the spike), and the plan-time warning;
+    - `monthly_day = 31` vs. `monthly_relative_week = "last"` + `monthly_relative_day = "day"` for the last day of the month, that Agent **skips** months without that day (spike result S5; day 29 only runs in February in leap years), and the plan-time warning;
     - daylight saving time: times are local server time, so on servers that observe DST a job in the skipped spring hour may run at the change or be skipped that day, and around the autumn change a job running every N minutes may pause for about an hour. Advice: avoid roughly 01:00–03:00 local time, or use a UTC server time zone (the MI default), and make jobs safe to re-run;
-    - whether `active_end_time` may be earlier than `active_start_time` (window crossing midnight), from the spike;
-    - `idle` needs the idle-CPU condition configured in Agent's properties (MI support confirmed in the spike);
+    - an `active_end_time` earlier than `active_start_time` means a window crossing midnight, e.g. `22:00:00`–`02:00:00` (first run at the start time on the start date); equal times aren't allowed with a sub-day interval; use `23:59:59`, not `00:00:00`, for "until midnight";
+    - `idle` needs the idle-CPU condition configured in Agent's properties, and is "not verified on Managed Instance" until someone tests it on a real MI (spike result S4);
   - email notifications (in `agent_operator.md`, linked from `notify_level_email` in `agent_job.md`): an operator only stores the address and mail is sent by Database Mail, which must be set up separately:
     - `Database Mail XPs` enabled, plus an SMTP account and a profile containing it;
     - on-prem/VM: SQL Agent's mail profile selected under Agent properties → Alert System, followed by an Agent restart;
@@ -276,9 +282,11 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 
    Two of these can't be fully answered with the Docker image:
    - **`idle` on Managed Instance** needs a real MI. If none is available during the spike, `idle` is documented as "not verified on Managed Instance" rather than as supported.
-   - **`monthly_day = 31`** can't be observed by waiting, because Agent only exposes the *next* run date (`next_run_date` in `msdb.dbo.sysjobschedules`). Attach a day-31 schedule to a job with `active_start_date` set to the start of a future short month (e.g. `2027-02-01` or `2027-04-01`) and read which date Agent picks as the next run: the 28th/30th means "last day", the 31st of the following month means "skipped". Changing the container's clock isn't practical, since containers share the host's clock.
+   - **`monthly_day = 31`** can't be observed by waiting, because Agent only exposes the *next* run date (`next_scheduled_run_date` in `msdb.dbo.sysjobactivity`; `next_run_date` in `sysjobschedules` is only refreshed periodically and read `0` right after attaching). Attach a day-31 schedule to a job with `active_start_date` set to the start of a future short month (e.g. `2027-02-01` or `2027-04-01`) and read which date Agent picks as the next run: the 28th/30th means "last day", the 31st of the following month means "skipped". Changing the container's clock isn't practical, since containers share the host's clock.
 
    The renumbering rewrite is built either way, but the msdb results decide how much of it is needed and what the tests assert. If either registry assumption fails, the plan registry is redesigned before the step resource is built.
+
+   **Status: done on 2026-10-12, except `idle` on Managed Instance. Results are in section 10.** Both registry assumptions held, so no redesign is needed.
 2. Docker fixtures and `EnsureAgentAvailable`.
 3. Operator, the simplest resource, to set up the end-to-end pattern.
 4. Job.
@@ -467,3 +475,19 @@ resource "sqlserver_agent_job_schedule" "stats_nightly" {
   schedule_id = sqlserver_agent_schedule.nightly_0230.schedule_id
 }
 ```
+
+## 10. Spike results (2026-10-12)
+Run against SQL Server 2022 Developer Edition (RTM-CU27, 16.0.4295.3) on Linux in Docker, with SQL Agent enabled, plus a throwaway SDK v2.40.1 provider with Terraform 1.16.5. The Agent stored procedures were also read from `msdb.sys.sql_modules` to confirm the behaviour. They're the same T-SQL on Windows and on Managed Instance, but MI wasn't tested directly.
+
+| # | Question | Result | Effect on the plan |
+|---|---|---|---|
+| S1 | Do step inserts/deletes renumber jumps and `start_step_id`? | **Insert: correct.** `sp_add_jobstep` shifts every `on_*_step_id` ≥ the new position. **Delete: buggy.** `sp_delete_jobstep` decrements jumps > the deleted number *before* resetting jumps = the deleted number, so a jump to the step right after the deleted one is reset to quit (success → `quit_with_success`, failure → `quit_with_failure`). Seen in the procedure source and reproduced: A jumps to C (3), delete B (2) → A's jump is lost. `start_step_id` is never changed by either procedure; it stayed `1` throughout. `@step_id = 0` deletes **all** steps. New steps default to `on_success_action = quit_with_success`. | The renumbering rewrite is required after deletes and moves. Never call `sp_delete_jobstep` with `step_id < 1`. Always pass explicit actions on `sp_add_jobstep`. |
+| S2 | Does `sp_add_jobstep` accept an `on_*_step_id` that doesn't exist yet? | **Yes.** `sp_verify_jobstep` allows forward references on purpose and only prints informational message 14236. A jump to the step itself (or a step id < 1) is rejected (14235). | No change. Forward jumps stay target-owned, because the target's number isn't stable; the "can't jump to itself" limit is confirmed. |
+| S3 | Does `sp_update_jobstep` leave `NULL` parameters untouched? | **Yes**, every parameter falls back to the current value when `NULL`. `N''` clears `command`, `server`, `database_name` (→ `master`), `database_user_name` and `output_file_name`. | "Send only changed parameters" works. Clearing an optional string sends `N''`. |
+| S3b | `database_user_name` behaviour (found while reading S3) | Ran real jobs. Owner `sa`, no user → `NT AUTHORITY\NETWORK SERVICE` (the Agent service account on Linux). Owner `sa`, user `reader` → `reader`. Owner non-sysadmin, with or without `reader` → the owner (`lowpriv`); the stored user is **silently ignored**. Caller not sysadmin: `sp_add_jobstep` errors (14583), `sp_update_jobstep` **silently drops** the value. SQL users are checked for existence at create/update (14262); Windows names aren't. | Run-as section: keep the owner check, add a caller-is-sysadmin check, and drop the "doesn't verify the user exists" note. |
+| S4 | `idle` on Managed Instance | **Not tested.** Needs a real MI. | Documented as "not verified on Managed Instance". |
+| S5 | `monthly_day` 29–31 in shorter months | **Skipped.** From a 2027-02-01 start: day 31 → 2027-03-31, day 30 → 2027-03-30, day 29 → 2027-03-29. From 2027-04-01: day 31 → 2027-05-31. From 2028-02-01 (leap year): day 29 → 2028-02-29. `last` + `day` from 2027-02-01 → 2027-02-28. | Warning wording and docs: "skips months without that day". |
+| S6 | `active_end_time` < `active_start_time`; related schedule edge cases | **Accepted.** The procedure source says it's a window spanning midnight. A 22:00–02:00 hourly schedule's first run is 22:00 on the start date; runs after midnight weren't observed directly (that would mean waiting overnight). Also: equal start/end times with a sub-day interval are rejected (14266). An end time of `0` is stored as `235959`. `subday_interval < 10` seconds is rejected (14278). Impossible dates like `20270230` are rejected with only `valid values are: 19900101..99991231`. | No end-after-start check; document the midnight window. New plan-time errors: equal times with a sub-day interval, end time `00:00:00`, dates before 1990-01-01. |
+| S7a | Does SDK v2 run `CustomizeDiff` for resources with no changes? | **Yes.** On `terraform plan` with nothing changed, `CustomizeDiff` ran for all 3 resources. | Registry design holds. |
+| S7b | Does one provider process plan all resources? | **Yes, per phase.** All resources were planned in one process (several short-lived instances start for validation, so the registry must be package-level, which it is). `terraform apply` uses a **new process** and re-plans **only changed** resources. For a brand-new chain all steps are re-planned there, and `previous_step_id` was unknown at plan but known at apply. | Registry design holds. Section 2 now explains the apply-phase limits. |
+
