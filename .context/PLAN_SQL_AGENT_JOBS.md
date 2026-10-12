@@ -154,16 +154,17 @@ ID: `sqlserver://host:port/agent_schedule/<schedule_id>`. msdb doesn't require s
 | `frequency_type` | `once \| daily \| weekly \| monthly \| monthly_relative \| agent_start \| idle` → 1/4/8/16/32/64/128 |
 | `recurrence_factor` | "every N days/weeks/months". For `daily` it maps to `freq_interval`, otherwise to `freq_recurrence_factor` |
 | `weekly_days` | set of `sunday…saturday` → bitmask 1, 2, 4 … 64 |
-| `monthly_day` | 1–31 |
+| `monthly_day` | 1–31. Values 29–31 give a plan-time **warning** (not an error) that the day doesn't exist in every month, pointing at `monthly_relative_week = "last"` + `monthly_relative_day = "day"` for the last day of the month. The wording follows the spike's finding on what Agent does in shorter months. |
 | `monthly_relative_week` | `first \| second \| third \| fourth \| last` → 1/2/4/8/16 |
 | `monthly_relative_day` | `sunday…saturday \| day \| weekday \| weekend_day` → 1–10 |
 | `subday_type` / `subday_interval` | `once \| seconds \| minutes \| hours` → 1/2/4/8. `subday_type` defaults to `once` (run once a day at `active_start_time`). `subday_interval` is required for `seconds`/`minutes`/`hours` and forbidden for `once`; for `seconds` it must be at least 10 (SQL Agent's minimum), checked at plan time. |
-| `active_start_date` / `active_end_date` | `YYYY-MM-DD` ↔ `yyyymmdd` int; Optional+Computed (defaults are today and `9999-12-31`). For "every N" schedules (`recurrence_factor` > 1) the start date anchors the cycle, so the docs tell users to set it explicitly. |
-| `active_start_time` / `active_end_time` | `HH:MM:SS` ↔ `hhmmss` int; defaults `00:00:00` / `23:59:59` |
+| `active_start_date` / `active_end_date` | `YYYY-MM-DD` ↔ `yyyymmdd` int; Optional+Computed (defaults are today and `9999-12-31`). Parsed at plan time with Go's `time.Parse` (layout `2006-01-02`), not just a pattern match, so `2026-02-30` or `2026-13-01` fail at plan instead of with a vague SQL Server error at apply. For "every N" schedules (`recurrence_factor` > 1) the start date anchors the cycle, so the docs tell users to set it explicitly. |
+| `active_start_time` / `active_end_time` | `HH:MM:SS` ↔ `hhmmss` int; defaults `00:00:00` / `23:59:59`. Parsed at plan time with `time.Parse` (layout `15:04:05`), so `24:00:00` or `12:61:00` fail at plan. No check that the end time is after the start time until the spike shows whether SQL Server allows a window that crosses midnight. |
 | `owner_login_name` | Optional+Computed |
 | `schedule_id`, `schedule_uid` | Computed |
 
-- A **CustomizeDiff** checks that only the fields relevant to the chosen `frequency_type` are set (for example, `weekly_days` is required for `weekly` and forbidden otherwise), and the `subday_*` rules above (`subday_type` doesn't apply to `once`, `agent_start` and `idle`).
+- A **CustomizeDiff** checks that only the fields relevant to the chosen `frequency_type` are set (for example, `weekly_days` is required for `weekly` and forbidden otherwise), and the `subday_*` rules above (`subday_type` doesn't apply to `once`, `agent_start` and `idle`). It also fails the plan when `active_end_date` is before `active_start_date` (when both are known at plan time).
+- **Plan-time checks vs. warnings:** dates, times, the end-date order and the `subday_*` rules are errors; `monthly_day` 29–31 is a warning (`ValidateDiagFunc` returning `diag.Warning`, since SDK v2's CustomizeDiff can't emit warnings). Daylight saving time isn't checked: a time like 02:15 is valid on almost every day of the year, and the provider doesn't know the server's time zone at plan time. It's documented instead.
 - **CRUD:** `sp_add_schedule` / `sp_update_schedule` / `sp_delete_schedule @force_delete = 0`. Terraform destroys the attachments first, so `force_delete` isn't needed.
 
 ### `sqlserver_agent_job_schedule` (attachment)
@@ -209,6 +210,7 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 ## 4. Tests
 - **Unit tests** (table-driven, like `sql/resource_governor_test.go`):
   - the schedule encoding round-trips (every frequency type, bitmask edges, `last`/`weekend_day`, the time and date formats) and the step `flags` mapping;
+  - the date/time validators: `2026-02-30`, `2026-13-01`, `2025-02-29`, `24:00:00`, `12:61:00` and malformed strings are rejected; `2028-02-29` and `23:59:59` are accepted; the `monthly_day` warning fires for 29–31 only;
   - the jump snapshot/rewrite after an insert, a delete and a move, and the forward/backward classification;
   - the plan registry: each row of the table above, re-registration of the same step, and unknown values being skipped.
 - **Acceptance tests** (`TestAccAgent*_Local_*`, using `templateToString`, Exists and Destroy checks):
@@ -229,7 +231,7 @@ ID: `sqlserver://host:port/agent_operator/<id>`
      - `database_name` set to a user database, then removed from config: the step is back in `master` with an empty plan afterwards;
      - `database_user_name` with a sysadmin owner applies and reads back unchanged;
      - `database_user_name` on a job owned by a non-sysadmin login fails at apply with the run-as error (`ExpectError`).
-  5. Schedule: one case per `frequency_type`, checking the friendly values read back unchanged and that the plan is empty afterwards. The cases are taken from the examples in section 9 so the documented examples are known to work. Also: `subday_type` omitted reads back as `once` with an empty plan, and `subday_interval < 10` with `seconds` fails at plan (`ExpectError`).
+  5. Schedule: one case per `frequency_type`, checking the friendly values read back unchanged and that the plan is empty afterwards. The cases are taken from the examples in section 9 so the documented examples are known to work. Also: `subday_type` omitted reads back as `once` with an empty plan, and `subday_interval < 10` with `seconds` fails at plan (`ExpectError`); an impossible date such as `2026-02-30` and an `active_end_date` before `active_start_date` both fail at plan (`ExpectError`).
   6. Attachment: attach and detach. Assert the schedule **still exists** after the job is destroyed (this covers the `@delete_unused_schedule = 0` fix).
   7. Operator plus a job with `notify_level_email = on_failure`.
 - `TestProvider` (`InternalValidate`) covers all the new schemas automatically.
@@ -249,7 +251,9 @@ ID: `sqlserver://host:port/agent_operator/<id>`
     - times are in the server's local time zone; on Managed Instance that's the instance time zone chosen at creation (UTC by default, can't be changed later);
     - for "every N days/weeks/months" schedules, `active_start_date` decides which days count, and defaults to the day of the apply, so set it explicitly (examples 2, 5 and 9);
     - `subday_type` defaults to `once`, and the 10-second minimum for `seconds`;
-    - `monthly_day = 31` vs. `monthly_relative_week = "last"` + `monthly_relative_day = "day"` for the last day of the month;
+    - `monthly_day = 31` vs. `monthly_relative_week = "last"` + `monthly_relative_day = "day"` for the last day of the month, what Agent does with day 29–31 in shorter months (from the spike), and the plan-time warning;
+    - daylight saving time: times are local server time, so on servers that observe DST a job in the skipped spring hour may run at the change or be skipped that day, and around the autumn change a job running every N minutes may pause for about an hour. Advice: avoid roughly 01:00–03:00 local time, or use a UTC server time zone (the MI default), and make jobs safe to re-run;
+    - whether `active_end_time` may be earlier than `active_start_time` (window crossing midnight), from the spike;
     - `idle` needs the idle-CPU condition configured in Agent's properties (MI support confirmed in the spike);
   - email notifications (in `agent_operator.md`, linked from `notify_level_email` in `agent_job.md`): an operator only stores the address and mail is sent by Database Mail, which must be set up separately:
     - `Database Mail XPs` enabled, plus an SMTP account and a profile containing it;
@@ -263,7 +267,8 @@ ID: `sqlserver://host:port/agent_operator/<id>`
    - whether `sp_add_jobstep` / `sp_delete_jobstep` shift other steps' `on_*_step_id` values and the job's `start_step_id`;
    - whether `sp_add_jobstep` accepts an `on_*_step_id` that doesn't exist yet;
    - that `sp_update_jobstep` leaves parameters passed as `NULL` untouched;
-   - whether `frequency_type = idle` schedules work on Managed Instance, and how `monthly_day = 31` behaves in shorter months.
+   - whether `frequency_type = idle` schedules work on Managed Instance, and how `monthly_day = 31` behaves in shorter months (skipped or run on the last day);
+   - whether `sp_add_schedule` accepts `active_end_time` < `active_start_time`, and if so whether it means a window crossing midnight. If it's rejected, add a plan-time check for it; if it works, document it.
 
    And in a throwaway provider build:
    - that SDK v2 calls `CustomizeDiff` for resources with no changes;
@@ -287,6 +292,7 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 - `category_name` on the job and operator is Optional with the built-in uncategorized category as its default, not Optional+Computed, so that removing it from config reverts the server and changes made outside Terraform show up as drift. The same applies to the step's `database_name` (default `master`).
 - `database_user_name` on a non-sysadmin-owned job is an apply-time error from the provider rather than left to SQL Server.
 - `subday_type` defaults to `once`; `active_start_date` keeps today as its default (rather than becoming Required) and the docs explain when to set it.
+- `monthly_day` 29–31 is a warning, not an error; daylight saving time is documented, not checked.
 
 ## 8. Follow-ups (out of scope for this plan)
 - **Database Mail resources:** e.g. `sqlserver_database_mail_account` (SMTP server, port, SSL, credentials, with the password as a write-only argument like `password_wo` on `sqlserver_login`) and `sqlserver_database_mail_profile` (accounts with sequence numbers). On MI the profile would be named `AzureManagedInstance_dbmail_profile` so Agent uses it. Until then, Database Mail is configured outside Terraform and only documented here.
