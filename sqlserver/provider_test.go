@@ -68,6 +68,7 @@ type TestConnector interface {
 	GetAgentOperator(operatorID int) (*model.AgentOperator, error)
 	GetAgentJob(jobID string) (*model.AgentJob, error)
 	GetAgentSchedule(scheduleID int) (*model.AgentSchedule, error)
+	GetAgentJobSchedule(jobID string, scheduleID int) (bool, error)
 	ExecContext(command string, args ...interface{}) error
 }
 
@@ -225,6 +226,10 @@ func (t testConnector) GetAgentJob(jobID string) (*model.AgentJob, error) {
 
 func (t testConnector) GetAgentSchedule(scheduleID int) (*model.AgentSchedule, error) {
 	return t.c.(AgentScheduleConnector).GetAgentSchedule(context.Background(), scheduleID)
+}
+
+func (t testConnector) GetAgentJobSchedule(jobID string, scheduleID int) (bool, error) {
+	return t.c.(AgentJobScheduleConnector).GetAgentJobSchedule(context.Background(), jobID, scheduleID)
 }
 
 func (t testConnector) ExecContext(command string, args ...interface{}) error {

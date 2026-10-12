@@ -3,8 +3,15 @@ package sql
 import (
 	"context"
 	"database/sql"
+	"time"
 
+	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/pkg/errors"
+)
+
+const (
+	errDeadlockVictim     = 1205
+	agentDeadlockAttempts = 5
 )
 
 // engineEditionAzureSQLDatabase is the SERVERPROPERTY('EngineEdition') value of Azure SQL Database,
@@ -35,4 +42,40 @@ func nullIfEmpty(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// agentExec runs a write against msdb, retrying when SQL Server picks it as a deadlock victim. msdb's Agent
+// procedures deadlock when Terraform creates several jobs or steps in parallel. The victim's transaction is
+// rolled back, so a command is only safe to retry when all of its changes are in one transaction.
+func (c *Connector) agentExec(ctx context.Context, command string, args ...interface{}) error {
+	return retryOnDeadlock(ctx, func() error {
+		return c.ExecContext(ctx, command, args...)
+	})
+}
+
+// agentQueryRow is agentExec for commands that return a row, such as the ID of a new object.
+func (c *Connector) agentQueryRow(ctx context.Context, command string, scanner func(*sql.Row) error, args ...interface{}) error {
+	return retryOnDeadlock(ctx, func() error {
+		return c.QueryRowContext(ctx, command, scanner, args...)
+	})
+}
+
+func retryOnDeadlock(ctx context.Context, f func() error) error {
+	var err error
+	for attempt := 1; attempt <= agentDeadlockAttempts; attempt++ {
+		if err = f(); !isDeadlockVictim(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt*100) * time.Millisecond):
+		}
+	}
+	return err
+}
+
+func isDeadlockVictim(err error) bool {
+	var sqlErr mssql.Error
+	return errors.As(err, &sqlErr) && sqlErr.Number == errDeadlockVictim
 }

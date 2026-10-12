@@ -35,7 +35,7 @@ func (c *Connector) GetAgentJob(ctx context.Context, jobID string) (*model.Agent
 // and returns the new job ID.
 func (c *Connector) CreateAgentJob(ctx context.Context, job *model.AgentJob) (string, error) {
 	var id string
-	err := c.QueryRowContext(ctx,
+	err := c.agentQueryRow(ctx,
 		`SET NOCOUNT ON
          SET XACT_ABORT ON
          DECLARE @id uniqueidentifier
@@ -69,7 +69,7 @@ func (c *Connector) CreateAgentJob(ctx context.Context, job *model.AgentJob) (st
 // UpdateAgentJob sets every attribute of the job to the values in job. An empty description or operator
 // name clears it; an empty owner keeps the current owner.
 func (c *Connector) UpdateAgentJob(ctx context.Context, job *model.AgentJob) error {
-	return c.ExecContext(ctx,
+	return c.agentExec(ctx,
 		`EXEC [msdb].[dbo].[sp_update_job] @job_id = @jobId, @new_name = @name, @enabled = @enabled, @description = @description,
               @category_name = @category, @owner_login_name = @owner,
               @notify_level_eventlog = @notifyEventlog, @notify_level_email = @notifyEmail,
@@ -89,7 +89,7 @@ func (c *Connector) UpdateAgentJob(ctx context.Context, job *model.AgentJob) err
 
 // DeleteAgentJob deletes the job but never its schedules, which are managed separately.
 func (c *Connector) DeleteAgentJob(ctx context.Context, jobID string) error {
-	return c.ExecContext(ctx,
+	return c.agentExec(ctx,
 		`IF EXISTS (SELECT 1 FROM [msdb].[dbo].[sysjobs] WHERE [job_id] = TRY_CONVERT(uniqueidentifier, @jobId))
            EXEC [msdb].[dbo].[sp_delete_job] @job_id = @jobId, @delete_unused_schedule = 0`,
 		sql.Named("jobId", jobID),

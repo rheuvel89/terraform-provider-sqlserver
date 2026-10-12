@@ -33,7 +33,7 @@ func (c *Connector) GetAgentSchedule(ctx context.Context, scheduleID int) (*mode
 // CreateAgentSchedule creates the schedule and returns its ID. A zero active start date lets SQL Server use today.
 func (c *Connector) CreateAgentSchedule(ctx context.Context, s *model.AgentSchedule) (int, error) {
 	var id int
-	err := c.QueryRowContext(ctx,
+	err := c.agentQueryRow(ctx,
 		`SET NOCOUNT ON
          DECLARE @id int
          EXEC [msdb].[dbo].[sp_add_schedule] @schedule_name = @name, @enabled = @enabled,
@@ -54,7 +54,7 @@ func (c *Connector) CreateAgentSchedule(ctx context.Context, s *model.AgentSched
 // UpdateAgentSchedule sets every attribute of the schedule to the values in s. A zero active start date and an empty
 // owner keep the current values.
 func (c *Connector) UpdateAgentSchedule(ctx context.Context, s *model.AgentSchedule) error {
-	return c.ExecContext(ctx,
+	return c.agentExec(ctx,
 		`EXEC [msdb].[dbo].[sp_update_schedule] @schedule_id = @scheduleId, @new_name = @name, @enabled = @enabled,
               @freq_type = @freqType, @freq_interval = @freqInterval, @freq_subday_type = @subdayType,
               @freq_subday_interval = @subdayInterval, @freq_relative_interval = @relativeInterval,
@@ -66,7 +66,7 @@ func (c *Connector) UpdateAgentSchedule(ctx context.Context, s *model.AgentSched
 
 // DeleteAgentSchedule deletes the schedule. It fails while the schedule is still attached to a job.
 func (c *Connector) DeleteAgentSchedule(ctx context.Context, scheduleID int) error {
-	return c.ExecContext(ctx,
+	return c.agentExec(ctx,
 		`IF EXISTS (SELECT 1 FROM [msdb].[dbo].[sysschedules] WHERE [schedule_id] = @id)
            EXEC [msdb].[dbo].[sp_delete_schedule] @schedule_id = @id, @force_delete = 0`,
 		sql.Named("id", scheduleID),

@@ -29,10 +29,13 @@ func (c *Connector) GetAgentOperator(ctx context.Context, operatorID int) (*mode
 
 func (c *Connector) CreateAgentOperator(ctx context.Context, op *model.AgentOperator) (int, error) {
 	var id int
-	err := c.QueryRowContext(ctx,
+	err := c.agentQueryRow(ctx,
 		`SET NOCOUNT ON
+         SET XACT_ABORT ON
+         BEGIN TRANSACTION
          EXEC [msdb].[dbo].[sp_add_operator] @name = @name, @enabled = @enabled, @email_address = @email, @category_name = @category
-         SELECT [id] FROM [msdb].[dbo].[sysoperators] WHERE [name] = @name`,
+         SELECT [id] FROM [msdb].[dbo].[sysoperators] WHERE [name] = @name
+         COMMIT TRANSACTION`,
 		func(r *sql.Row) error {
 			return r.Scan(&id)
 		},
@@ -46,7 +49,7 @@ func (c *Connector) CreateAgentOperator(ctx context.Context, op *model.AgentOper
 
 // UpdateAgentOperator updates the operator currently called name to the values in op, renaming it when op.Name differs.
 func (c *Connector) UpdateAgentOperator(ctx context.Context, name string, op *model.AgentOperator) error {
-	return c.ExecContext(ctx,
+	return c.agentExec(ctx,
 		`EXEC [msdb].[dbo].[sp_update_operator] @name = @name, @new_name = @newName, @enabled = @enabled, @email_address = @email, @category_name = @category`,
 		sql.Named("name", name),
 		sql.Named("newName", nullIfEmpty(op.Name)),
@@ -57,7 +60,7 @@ func (c *Connector) UpdateAgentOperator(ctx context.Context, name string, op *mo
 }
 
 func (c *Connector) DeleteAgentOperator(ctx context.Context, name string) error {
-	return c.ExecContext(ctx,
+	return c.agentExec(ctx,
 		`IF EXISTS (SELECT 1 FROM [msdb].[dbo].[sysoperators] WHERE [name] = @name)
            EXEC [msdb].[dbo].[sp_delete_operator] @name = @name`,
 		sql.Named("name", name),
