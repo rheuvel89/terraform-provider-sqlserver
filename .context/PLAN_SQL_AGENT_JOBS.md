@@ -157,13 +157,13 @@ ID: `sqlserver://host:port/agent_schedule/<schedule_id>`. msdb doesn't require s
 | `monthly_day` | 1–31 |
 | `monthly_relative_week` | `first \| second \| third \| fourth \| last` → 1/2/4/8/16 |
 | `monthly_relative_day` | `sunday…saturday \| day \| weekday \| weekend_day` → 1–10 |
-| `subday_type` / `subday_interval` | `once \| seconds \| minutes \| hours` → 1/2/4/8 |
-| `active_start_date` / `active_end_date` | `YYYY-MM-DD` ↔ `yyyymmdd` int; Optional+Computed (defaults are today and `9999-12-31`) |
+| `subday_type` / `subday_interval` | `once \| seconds \| minutes \| hours` → 1/2/4/8. `subday_type` defaults to `once` (run once a day at `active_start_time`). `subday_interval` is required for `seconds`/`minutes`/`hours` and forbidden for `once`; for `seconds` it must be at least 10 (SQL Agent's minimum), checked at plan time. |
+| `active_start_date` / `active_end_date` | `YYYY-MM-DD` ↔ `yyyymmdd` int; Optional+Computed (defaults are today and `9999-12-31`). For "every N" schedules (`recurrence_factor` > 1) the start date anchors the cycle, so the docs tell users to set it explicitly. |
 | `active_start_time` / `active_end_time` | `HH:MM:SS` ↔ `hhmmss` int; defaults `00:00:00` / `23:59:59` |
 | `owner_login_name` | Optional+Computed |
 | `schedule_id`, `schedule_uid` | Computed |
 
-- A **CustomizeDiff** checks that only the fields relevant to the chosen `frequency_type` are set (for example, `weekly_days` is required for `weekly` and forbidden otherwise).
+- A **CustomizeDiff** checks that only the fields relevant to the chosen `frequency_type` are set (for example, `weekly_days` is required for `weekly` and forbidden otherwise), and the `subday_*` rules above (`subday_type` doesn't apply to `once`, `agent_start` and `idle`).
 - **CRUD:** `sp_add_schedule` / `sp_update_schedule` / `sp_delete_schedule @force_delete = 0`. Terraform destroys the attachments first, so `force_delete` isn't needed.
 
 ### `sqlserver_agent_job_schedule` (attachment)
@@ -229,7 +229,7 @@ ID: `sqlserver://host:port/agent_operator/<id>`
      - `database_name` set to a user database, then removed from config: the step is back in `master` with an empty plan afterwards;
      - `database_user_name` with a sysadmin owner applies and reads back unchanged;
      - `database_user_name` on a job owned by a non-sysadmin login fails at apply with the run-as error (`ExpectError`).
-  5. Schedule: one case per `frequency_type`, checking the friendly values read back unchanged and that the plan is empty afterwards.
+  5. Schedule: one case per `frequency_type`, checking the friendly values read back unchanged and that the plan is empty afterwards. The cases are taken from the examples in section 9 so the documented examples are known to work. Also: `subday_type` omitted reads back as `once` with an empty plan, and `subday_interval < 10` with `seconds` fails at plan (`ExpectError`).
   6. Attachment: attach and detach. Assert the schedule **still exists** after the job is destroyed (this covers the `@delete_unused_schedule = 0` fix).
   7. Operator plus a job with `notify_level_email = on_failure`.
 - `TestProvider` (`InternalValidate`) covers all the new schemas automatically.
@@ -244,6 +244,13 @@ ID: `sqlserver://host:port/agent_operator/<id>`
   - the chain (`job_id` on the first step, `previous_step_id` on the rest), that it can't fork, and the plan-time check with its limits;
   - the jump rule (declared on the later step), with an example of each direction;
   - that the step lock only covers a single apply;
+  - schedules (in `agent_schedule.md`):
+    - an "Example Usage" section built from the examples in section 9, grouped as daily, weekly, monthly, monthly relative, and one-off/event-based, plus `examples/agent_schedule/main.tf` with all of them so they can be applied as-is;
+    - times are in the server's local time zone; on Managed Instance that's the instance time zone chosen at creation (UTC by default, can't be changed later);
+    - for "every N days/weeks/months" schedules, `active_start_date` decides which days count, and defaults to the day of the apply, so set it explicitly (examples 2, 5 and 9);
+    - `subday_type` defaults to `once`, and the 10-second minimum for `seconds`;
+    - `monthly_day = 31` vs. `monthly_relative_week = "last"` + `monthly_relative_day = "day"` for the last day of the month;
+    - `idle` needs the idle-CPU condition configured in Agent's properties (MI support confirmed in the spike);
   - email notifications (in `agent_operator.md`, linked from `notify_level_email` in `agent_job.md`): an operator only stores the address and mail is sent by Database Mail, which must be set up separately:
     - `Database Mail XPs` enabled, plus an SMTP account and a profile containing it;
     - on-prem/VM: SQL Agent's mail profile selected under Agent properties → Alert System, followed by an Agent restart;
@@ -255,7 +262,8 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 1. **Spike:** run the Docker image with the agent enabled and confirm by hand:
    - whether `sp_add_jobstep` / `sp_delete_jobstep` shift other steps' `on_*_step_id` values and the job's `start_step_id`;
    - whether `sp_add_jobstep` accepts an `on_*_step_id` that doesn't exist yet;
-   - that `sp_update_jobstep` leaves parameters passed as `NULL` untouched.
+   - that `sp_update_jobstep` leaves parameters passed as `NULL` untouched;
+   - whether `frequency_type = idle` schedules work on Managed Instance, and how `monthly_day = 31` behaves in shorter months.
 
    And in a throwaway provider build:
    - that SDK v2 calls `CustomizeDiff` for resources with no changes;
@@ -278,6 +286,174 @@ ID: `sqlserver://host:port/agent_operator/<id>`
 - Removing a forward jump resets the source to the default action rather than to whatever it was before.
 - `category_name` on the job and operator is Optional with the built-in uncategorized category as its default, not Optional+Computed, so that removing it from config reverts the server and changes made outside Terraform show up as drift. The same applies to the step's `database_name` (default `master`).
 - `database_user_name` on a non-sysadmin-owned job is an apply-time error from the provider rather than left to SQL Server.
+- `subday_type` defaults to `once`; `active_start_date` keeps today as its default (rather than becoming Required) and the docs explain when to set it.
 
 ## 8. Follow-ups (out of scope for this plan)
 - **Database Mail resources:** e.g. `sqlserver_database_mail_account` (SMTP server, port, SSL, credentials, with the password as a write-only argument like `password_wo` on `sqlserver_login`) and `sqlserver_database_mail_profile` (accounts with sequence numbers). On MI the profile would be named `AzureManagedInstance_dbmail_profile` so Agent uses it. Until then, Database Mail is configured outside Terraform and only documented here.
+
+## 9. Appendix: schedule examples
+Source for the `agent_schedule.md` "Example Usage" section, `examples/agent_schedule/main.tf`, and the schedule acceptance tests. `subday_type` is left out where the default `once` applies.
+
+**Daily**
+
+```hcl
+# 1. Every day at 02:30
+resource "sqlserver_agent_schedule" "nightly_0230" {
+  name              = "Daily 02:30"
+  frequency_type    = "daily"
+  active_start_time = "02:30:00"
+}
+
+# 2. Every 3 days at 04:00, counting from a fixed date
+resource "sqlserver_agent_schedule" "every_3_days" {
+  name              = "Every 3 days at 04:00"
+  frequency_type    = "daily"
+  recurrence_factor = 3
+  active_start_time = "04:00:00"
+  active_start_date = "2026-11-01" # anchors the cycle
+}
+
+# 11. Every 5 minutes, only during a date range (Black Friday to Cyber Monday)
+resource "sqlserver_agent_schedule" "black_friday_watch" {
+  name              = "Black Friday 2026 - every 5 min"
+  frequency_type    = "daily"
+  subday_type       = "minutes"
+  subday_interval   = 5
+  active_start_date = "2026-11-26"
+  active_end_date   = "2026-11-30"
+}
+```
+
+**Weekly**
+
+```hcl
+# 3. Sunday 01:00 (weekly full backup)
+resource "sqlserver_agent_schedule" "weekly_full_backup" {
+  name              = "Weekly full backup - Sunday 01:00"
+  frequency_type    = "weekly"
+  recurrence_factor = 1
+  weekly_days       = ["sunday"]
+  active_start_time = "01:00:00"
+}
+
+# 4. Every 15 minutes, 08:00-18:00, Monday to Friday
+resource "sqlserver_agent_schedule" "office_hours_15m" {
+  name              = "Weekdays every 15 min, 08:00-18:00"
+  frequency_type    = "weekly"
+  recurrence_factor = 1
+  weekly_days       = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+  subday_type       = "minutes"
+  subday_interval   = 15
+  active_start_time = "08:00:00"
+  active_end_time   = "18:00:00"
+}
+
+# 5. Every other Friday at 17:30 (payroll)
+resource "sqlserver_agent_schedule" "biweekly_payroll" {
+  name              = "Payroll export - every other Friday 17:30"
+  frequency_type    = "weekly"
+  recurrence_factor = 2
+  weekly_days       = ["friday"]
+  active_start_time = "17:30:00"
+  active_start_date = "2026-10-16" # a payroll Friday; anchors which Fridays count
+}
+```
+
+**Monthly (fixed day)**
+
+```hcl
+# 9. Quarterly: 1st of Jan/Apr/Jul/Oct at 07:00
+resource "sqlserver_agent_schedule" "quarterly" {
+  name              = "Quarterly report - 1st of quarter 07:00"
+  frequency_type    = "monthly"
+  recurrence_factor = 3
+  monthly_day       = 1
+  active_start_time = "07:00:00"
+  active_start_date = "2027-01-01" # anchors the quarters to January
+}
+```
+
+**Monthly relative**
+
+```hcl
+# 6. First Sunday of the month at 03:00
+resource "sqlserver_agent_schedule" "first_sunday" {
+  name                  = "First Sunday of the month 03:00"
+  frequency_type        = "monthly_relative"
+  recurrence_factor     = 1
+  monthly_relative_week = "first"
+  monthly_relative_day  = "sunday"
+  active_start_time     = "03:00:00"
+}
+
+# 7. Second Wednesday at 06:00 (post-patch checks). Not always the day after
+#    Patch Tuesday: if the 1st is a Wednesday, it falls before the second Tuesday.
+resource "sqlserver_agent_schedule" "post_patch_tuesday" {
+  name                  = "Second Wednesday - post-patch checks 06:00"
+  frequency_type        = "monthly_relative"
+  recurrence_factor     = 1
+  monthly_relative_week = "second"
+  monthly_relative_day  = "wednesday"
+  active_start_time     = "06:00:00"
+}
+
+# 8. Last weekday (Mon-Fri) of the month at 20:00 (month-end close).
+#    Use monthly_relative_day = "day" for the last calendar day.
+resource "sqlserver_agent_schedule" "month_end_close" {
+  name                  = "Last weekday of the month 20:00"
+  frequency_type        = "monthly_relative"
+  recurrence_factor     = 1
+  monthly_relative_week = "last"
+  monthly_relative_day  = "weekday"
+  active_start_time     = "20:00:00"
+}
+
+# 10. First weekend day (Saturday or Sunday) of the month, every 6 hours
+resource "sqlserver_agent_schedule" "first_weekend_day_6h" {
+  name                  = "First weekend day, every 6h"
+  frequency_type        = "monthly_relative"
+  recurrence_factor     = 1
+  monthly_relative_week = "first"
+  monthly_relative_day  = "weekend_day"
+  subday_type           = "hours"
+  subday_interval       = 6
+}
+```
+
+**One-off and event-based**
+
+```hcl
+# 12. Once, at a fixed date and time (migration cutover)
+resource "sqlserver_agent_schedule" "cutover" {
+  name              = "One-off cutover"
+  frequency_type    = "once"
+  active_start_date = "2026-12-05"
+  active_start_time = "22:00:00"
+}
+
+# 13. Whenever SQL Server Agent starts
+resource "sqlserver_agent_schedule" "on_agent_start" {
+  name           = "On SQL Agent start"
+  frequency_type = "agent_start"
+}
+
+# 14. Whenever the CPU is idle (needs the idle-CPU condition in Agent's properties)
+resource "sqlserver_agent_schedule" "when_idle" {
+  name           = "When CPU idle"
+  frequency_type = "idle"
+}
+```
+
+**Sharing one schedule between jobs**
+
+```hcl
+resource "sqlserver_agent_job_schedule" "etl_nightly" {
+  job_id      = sqlserver_agent_job.nightly_etl.job_id
+  schedule_id = sqlserver_agent_schedule.nightly_0230.schedule_id
+}
+
+resource "sqlserver_agent_job_schedule" "stats_nightly" {
+  job_id      = sqlserver_agent_job.update_stats.job_id
+  schedule_id = sqlserver_agent_schedule.nightly_0230.schedule_id
+}
+```
