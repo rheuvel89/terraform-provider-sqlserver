@@ -86,3 +86,11 @@ const (
 	agentJobDefaultCategory      = "[Uncategorized (Local)]"
 	agentOperatorDefaultCategory = "[Uncategorized]"
 )
+
+// agentNotifyLevels maps the friendly notify/delete levels of a job to their msdb values.
+var agentNotifyLevels = map[string]int{
+	"never":      0,
+	"on_success": 1,
+	"on_failure": 2,
+	"always":     3,
+}
