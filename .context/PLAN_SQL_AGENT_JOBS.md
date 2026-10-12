@@ -274,6 +274,10 @@ ID: `sqlserver://host:port/agent_operator/<id>`
    - that SDK v2 calls `CustomizeDiff` for resources with no changes;
    - that one provider process plans all resources of a `terraform plan`, so the registry sees every step.
 
+   Two of these can't be fully answered with the Docker image:
+   - **`idle` on Managed Instance** needs a real MI. If none is available during the spike, `idle` is documented as "not verified on Managed Instance" rather than as supported.
+   - **`monthly_day = 31`** can't be observed by waiting, because Agent only exposes the *next* run date (`next_run_date` in `msdb.dbo.sysjobschedules`). Attach a day-31 schedule to a job with `active_start_date` set to the start of a future short month (e.g. `2027-02-01` or `2027-04-01`) and read which date Agent picks as the next run: the 28th/30th means "last day", the 31st of the following month means "skipped". Changing the container's clock isn't practical, since containers share the host's clock.
+
    The renumbering rewrite is built either way, but the msdb results decide how much of it is needed and what the tests assert. If either registry assumption fails, the plan registry is redesigned before the step resource is built.
 2. Docker fixtures and `EnsureAgentAvailable`.
 3. Operator, the simplest resource, to set up the end-to-end pattern.
