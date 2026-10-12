@@ -1,6 +1,7 @@
 package sqlserver
 
 import (
+	"database/sql"
 	"fmt"
 	"regexp"
 	"testing"
@@ -207,6 +208,95 @@ func TestAccAgentJob_Local_DuplicateName(t *testing.T) {
                     depends_on = [sqlserver_agent_job.first]
                   }`,
 				ExpectError: regexp.MustCompile(`The specified @name \('tf_test_job_duplicate'\) already exists`),
+			},
+		},
+	})
+}
+
+// TestAccAgent_Local_DeletedOutsideTerraform deletes the job, its schedule and its operator in SQL Server, as
+// someone would in SSMS. Every agent resource must notice on refresh and be created again in one apply.
+func TestAccAgent_Local_DeletedOutsideTerraform(t *testing.T) {
+	config := testAccProviderBlock + `
+      resource "sqlserver_agent_operator" "dba" {
+        name          = "tf_test_oob_operator"
+        email_address = "dba@example.com"
+      }
+      resource "sqlserver_agent_job" "test" {
+        name                       = "tf_test_oob_job"
+        notify_level_email         = "on_failure"
+        notify_email_operator_name = sqlserver_agent_operator.dba.name
+      }
+      resource "sqlserver_agent_job_step" "a" {
+        job_id  = sqlserver_agent_job.test.job_id
+        name    = "a"
+        command = "SELECT 1"
+      }
+      resource "sqlserver_agent_job_step" "b" {
+        previous_step_id = sqlserver_agent_job_step.a.id
+        name             = "b"
+        command          = "SELECT 2"
+      }
+      resource "sqlserver_agent_schedule" "nightly" {
+        name           = "tf_test_oob_schedule"
+        frequency_type = "daily"
+      }
+      resource "sqlserver_agent_job_schedule" "nightly" {
+        job_id      = sqlserver_agent_job.test.job_id
+        schedule_id = sqlserver_agent_schedule.nightly.schedule_id
+      }`
+
+	var jobID, scheduleID string
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy: func(state *terraform.State) error {
+			if err := testAccCheckAgentJobDestroy(state); err != nil {
+				return err
+			}
+			if err := testAccCheckAgentScheduleDestroy(state); err != nil {
+				return err
+			}
+			return testAccCheckAgentOperatorDestroy(state)
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: func(state *terraform.State) error {
+					jobID = state.RootModule().Resources["sqlserver_agent_job.test"].Primary.Attributes["job_id"]
+					scheduleID = state.RootModule().Resources["sqlserver_agent_schedule.nightly"].Primary.Attributes["schedule_id"]
+					return nil
+				},
+			},
+			{
+				PreConfig: func() {
+					connector, err := getTestConnector(nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					// Deleting the job also deletes its steps and its schedule attachment.
+					if err = connector.ExecContext(`
+                        EXEC [msdb].[dbo].[sp_delete_job] @job_id = @jobId, @delete_unused_schedule = 0
+                        EXEC [msdb].[dbo].[sp_delete_schedule] @schedule_id = @scheduleId, @force_delete = 1
+                        EXEC [msdb].[dbo].[sp_delete_operator] @name = N'tf_test_oob_operator'`,
+						sql.Named("jobId", jobID), sql.Named("scheduleId", scheduleID)); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckAgentOperatorExists("sqlserver_agent_operator.dba"),
+					testAccCheckAgentJobExists("sqlserver_agent_job.test"),
+					testAccCheckAgentJobScheduleExists("sqlserver_agent_job_schedule.nightly"),
+					testAccCheckAgentJobStepOrder(t, "a", "b"),
+					resource.TestCheckResourceAttr("sqlserver_agent_job.test", "notify_email_operator_name", "tf_test_oob_operator"),
+					func(state *terraform.State) error {
+						if state.RootModule().Resources["sqlserver_agent_job.test"].Primary.Attributes["job_id"] == jobID {
+							return fmt.Errorf("the job wasn't created again")
+						}
+						return nil
+					},
+				),
 			},
 		},
 	})

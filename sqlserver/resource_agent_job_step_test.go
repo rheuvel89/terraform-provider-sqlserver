@@ -49,8 +49,12 @@ func testAccAgentJobStepsConfig(jobName string, steps ...testStep) string {
 }
 
 func testAccAgentJobSteps(t *testing.T) func(state *terraform.State) []model.AgentJobStep {
+	return testAccAgentJobStepsOf(t, "sqlserver_agent_job.test")
+}
+
+func testAccAgentJobStepsOf(t *testing.T, job string) func(state *terraform.State) []model.AgentJobStep {
 	return func(state *terraform.State) []model.AgentJobStep {
-		rs := state.RootModule().Resources["sqlserver_agent_job.test"]
+		rs := state.RootModule().Resources[job]
 		connector, err := getTestConnector(rs.Primary.Attributes)
 		if err != nil {
 			t.Fatal(err)
@@ -65,13 +69,17 @@ func testAccAgentJobSteps(t *testing.T) func(state *terraform.State) []model.Age
 
 // testAccCheckAgentJobStepOrder checks the order of the job's steps in msdb.
 func testAccCheckAgentJobStepOrder(t *testing.T, names ...string) resource.TestCheckFunc {
+	return testAccCheckAgentJobStepOrderOf(t, "sqlserver_agent_job.test", names...)
+}
+
+func testAccCheckAgentJobStepOrderOf(t *testing.T, job string, names ...string) resource.TestCheckFunc {
 	return func(state *terraform.State) error {
 		var got []string
-		for _, s := range testAccAgentJobSteps(t)(state) {
+		for _, s := range testAccAgentJobStepsOf(t, job)(state) {
 			got = append(got, s.Name)
 		}
 		if strings.Join(got, ",") != strings.Join(names, ",") {
-			return fmt.Errorf("steps are %v, expected %v", got, names)
+			return fmt.Errorf("%s: steps are %v, expected %v", job, got, names)
 		}
 		return nil
 	}
@@ -131,14 +139,21 @@ func TestAccAgentJobStep_Local_Chain(t *testing.T) {
 			Check:  testAccCheckAgentJobStepOrder(t, "extract", "clean", "transform", "load"),
 		},
 		resource.TestStep{
-			// Delete a middle step.
-			Config: testAccAgentJobStepsConfig(job, testStep{"extract", "", ""}, testStep{"clean", "extract", ""}, testStep{"load", "clean", ""}),
-			Check:  testAccCheckAgentJobStepOrder(t, "extract", "clean", "load"),
+			// Delete a middle step, and change clean's output options in place.
+			Config: testAccAgentJobStepsConfig(job, testStep{"extract", "", ""},
+				testStep{"clean", "extract", "log_to_table = true\ninclude_step_output_in_history = true"}, testStep{"load", "clean", ""}),
+			Check: resource.ComposeTestCheckFunc(
+				testAccCheckAgentJobStepOrder(t, "extract", "clean", "load"),
+				testAccCheckAgentStepFlags(t, "clean", 12),
+			),
 		},
 		resource.TestStep{
-			// Move the last step to the head.
+			// Move the last step to the head; clean's output options are cleared again.
 			Config: testAccAgentJobStepsConfig(job, testStep{"load", "", ""}, testStep{"extract", "load", ""}, testStep{"clean", "extract", ""}),
-			Check:  testAccCheckAgentJobStepOrder(t, "load", "extract", "clean"),
+			Check: resource.ComposeTestCheckFunc(
+				testAccCheckAgentJobStepOrder(t, "load", "extract", "clean"),
+				testAccCheckAgentStepFlags(t, "clean", 0),
+			),
 		},
 	)
 }
@@ -229,8 +244,8 @@ func TestAccAgentJobStep_Local_Jumps(t *testing.T) {
 			),
 		},
 		resource.TestStep{
-			// Delete the step directly before the target of a backward jump (validate is before load, whose jump goes to
-			// extract) and directly before notify's sources: sp_delete_jobstep loses jumps to the next step (spike S1).
+			// Delete a step in the middle: the jumps around it keep pointing at the right steps. (The sp_delete_jobstep
+			// bug itself is covered by TestAccAgentJobStep_Local_MoveRepairsJumps.)
 			Config: testAccAgentJobStepsConfig(job,
 				testStep{"extract", "", `command = "SELECT 'extract v2'"`}, testStep{"transform", "extract", ""},
 				testStep{"load", "transform", backward.extra}, notify),
@@ -288,6 +303,11 @@ func TestAccAgentJobStep_Local_JumpConflicts(t *testing.T) {
 			Config: testAccAgentJobStepsConfig(job, testStep{"a", "", `on_fail_action = "quit_with_success"`},
 				testStep{"b", "a", `handles_failure_of = [sqlserver_agent_job_step.a.name]`}),
 			ExpectError: regexp.MustCompile(`step "a" already has on_fail_action = "quit_with_success"`),
+		},
+		resource.TestStep{
+			// handles_*_of can only name earlier steps.
+			Config:      testAccAgentJobStepsConfig(job, testStep{"a", "", `handles_failure_of = ["b"]`}, testStep{"b", "a", ""}),
+			ExpectError: regexp.MustCompile(`step "b" comes after "a"; a step can only handle the failure of an earlier step`),
 		},
 	)
 }
@@ -378,6 +398,24 @@ func TestAccAgentJobStep_Local_RunAsNonSysadmin(t *testing.T) {
 			ExpectError: regexp.MustCompile(`the login the provider connects with isn't sysadmin`),
 		},
 	)
+	// The owner changes to a non-sysadmin while the step keeps database_user_name and only its command changes:
+	// the run-as check must still run, or SQL Server silently runs the step as the owner from then on.
+	ownerChange := func(owner, command string) string {
+		config := testAccAgentJobStepsConfig("tf_test_step_owner_change", testStep{"s", "", `database_user_name = "dbo"
+        command = "` + command + `"`})
+		if owner == "" {
+			return config
+		}
+		return strings.Replace(config, `name = "tf_test_step_owner_change"`, fmt.Sprintf(`name = "tf_test_step_owner_change"
+        owner_login_name = %q`, owner), 1)
+	}
+	testAccAgentJobStepCase(t,
+		resource.TestStep{Config: ownerChange("", "SELECT 1")},
+		resource.TestStep{
+			Config:      ownerChange(login, "SELECT 2"),
+			ExpectError: regexp.MustCompile(`owned by "tf_test_step_owner", which isn't sysadmin`),
+		},
+	)
 	asNonSysadmin := func(extra string) string {
 		return strings.Replace(testAccAgentJobStepsConfig("tf_test_step_caller_update", testStep{"s", "", extra}),
 			testAccProviderBlock, nonSysadminProvider, 1)
@@ -388,6 +426,122 @@ func TestAccAgentJobStep_Local_RunAsNonSysadmin(t *testing.T) {
 			// On update sp_update_jobstep would silently drop the value instead of failing.
 			Config:      asNonSysadmin(`database_user_name = "dbo"`),
 			ExpectError: regexp.MustCompile(`the login the provider connects with isn't sysadmin`),
+		},
+	)
+}
+
+func testAccCheckAgentStepFlags(t *testing.T, name string, flags int) resource.TestCheckFunc {
+	return func(state *terraform.State) error {
+		s := findAgentStep(testAccAgentJobSteps(t)(state), name)
+		if s == nil {
+			return fmt.Errorf("no step %q", name)
+		}
+		if s.Flags != flags {
+			return fmt.Errorf("step %q has flags %d, expected %d", name, s.Flags, flags)
+		}
+		return nil
+	}
+}
+
+func TestAccAgentJobStep_Local_SuccessJumpsAndDeleteRepair(t *testing.T) {
+	const job = "tf_test_step_repair"
+	testAccAgentJobStepCase(t,
+		resource.TestStep{
+			// Success jumps in both directions: b's success goes forward to d (declared on d), c's success goes
+			// back to a (declared on c). a's failure goes forward to c.
+			Config: testAccAgentJobStepsConfig(job,
+				testStep{"a", "", ""},
+				testStep{"b", "a", ""},
+				testStep{"c", "b", `handles_failure_of   = [sqlserver_agent_job_step.a.name]
+                                    on_success_action    = "go_to_step"
+                                    on_success_step_name = sqlserver_agent_job_step.a.name`},
+				testStep{"d", "c", `handles_success_of = [sqlserver_agent_job_step.b.name]`}),
+			Check: resource.ComposeTestCheckFunc(
+				testAccCheckAgentJump(t, "a", agentOutcomeFailure, "c"),
+				testAccCheckAgentJump(t, "b", agentOutcomeSuccess, "d"),
+				testAccCheckAgentJump(t, "c", agentOutcomeSuccess, "a"),
+				resource.TestCheckResourceAttr("sqlserver_agent_job_step.c", "on_success_action", "go_to_step"),
+				resource.TestCheckResourceAttr("sqlserver_agent_job_step.c", "on_success_step_name", "a"),
+				resource.TestCheckResourceAttr("sqlserver_agent_job_step.d", "handles_success_of.#", "1"),
+				resource.TestCheckResourceAttr("sqlserver_agent_job_step.b", "on_success_action", "go_to_next_step"),
+			),
+		},
+		resource.TestStep{
+			// Delete b, the step right before c. sp_delete_jobstep resets every jump to the step after the deleted
+			// one (spike result S1), here a's failure jump to c; the provider must restore it. d now handles a's success.
+			Config: testAccAgentJobStepsConfig(job,
+				testStep{"a", "", ""},
+				testStep{"c", "a", `handles_failure_of   = [sqlserver_agent_job_step.a.name]
+                                    on_success_action    = "go_to_step"
+                                    on_success_step_name = sqlserver_agent_job_step.a.name`},
+				testStep{"d", "c", `handles_success_of = [sqlserver_agent_job_step.a.name]`}),
+			Check: resource.ComposeTestCheckFunc(
+				testAccCheckAgentJobStepOrder(t, "a", "c", "d"),
+				testAccCheckAgentJump(t, "a", agentOutcomeFailure, "c"),
+				testAccCheckAgentJump(t, "a", agentOutcomeSuccess, "d"),
+				testAccCheckAgentJump(t, "c", agentOutcomeSuccess, "a"),
+			),
+		},
+		resource.TestStep{
+			// Delete d, the target of a's forward success jump: SQL Server resets it to quit with success, the
+			// provider's default for success is go to the next step.
+			Config: testAccAgentJobStepsConfig(job,
+				testStep{"a", "", ""},
+				testStep{"c", "a", `handles_failure_of   = [sqlserver_agent_job_step.a.name]
+                                    on_success_action    = "go_to_step"
+                                    on_success_step_name = sqlserver_agent_job_step.a.name`}),
+			Check: resource.ComposeTestCheckFunc(
+				testAccCheckAgentJobStepOrder(t, "a", "c"),
+				testAccCheckAgentJump(t, "a", agentOutcomeSuccess, ""),
+				testAccCheckAgentJump(t, "a", agentOutcomeFailure, "c"),
+			),
+		},
+	)
+}
+
+func TestAccAgentJobStep_Local_PlanErrors(t *testing.T) {
+	cases := map[string]string{
+		`on_fail_step_name is required when on_fail_action is "go_to_step"`:           `on_fail_action = "go_to_step"`,
+		`on_success_step_name can only be set when on_success_action is "go_to_step"`: `on_success_step_name = "other"`,
+		`step "s" can't go to itself on failure`:                                      "on_fail_action = \"go_to_step\"\non_fail_step_name = \"s\"",
+		`step "s" can't handle its own success`:                                       `handles_success_of = ["s"]`,
+	}
+	var steps []resource.TestStep
+	for want, extra := range cases {
+		steps = append(steps, resource.TestStep{
+			Config:      testAccAgentJobStepsConfig("tf_test_step_plan_errors", testStep{"s", "", extra}),
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile(regexp.QuoteMeta(want)),
+		})
+	}
+	testAccAgentJobStepCase(t, steps...)
+}
+
+func TestAccAgentJobStep_Local_MoveRepairsJumps(t *testing.T) {
+	// d jumps back to c and e jumps back to d; neither changes. Deleting b either deletes b first or moves c first
+	// (delete and insert again), depending on the order Terraform picks. Either way sp_delete_jobstep resets a jump
+	// to the step after the deleted one (spike result S1): d's jump to c, or e's jump to d. Nothing re-applies d's
+	// or e's config, so only the provider's jump repair keeps them.
+	const job = "tf_test_step_move_repair"
+	d := testStep{"d", "c", `on_fail_action    = "go_to_step"
+                             on_fail_step_name = sqlserver_agent_job_step.c.name`}
+	e := testStep{"e", "d", `on_fail_action    = "go_to_step"
+                             on_fail_step_name = sqlserver_agent_job_step.d.name`}
+	testAccAgentJobStepCase(t,
+		resource.TestStep{
+			Config: testAccAgentJobStepsConfig(job, testStep{"a", "", ""}, testStep{"b", "a", ""}, testStep{"c", "b", ""}, d, e),
+			Check: resource.ComposeTestCheckFunc(
+				testAccCheckAgentJump(t, "d", agentOutcomeFailure, "c"),
+				testAccCheckAgentJump(t, "e", agentOutcomeFailure, "d"),
+			),
+		},
+		resource.TestStep{
+			Config: testAccAgentJobStepsConfig(job, testStep{"a", "", ""}, testStep{"c", "a", ""}, d, e),
+			Check: resource.ComposeTestCheckFunc(
+				testAccCheckAgentJobStepOrder(t, "a", "c", "d", "e"),
+				testAccCheckAgentJump(t, "d", agentOutcomeFailure, "c"),
+				testAccCheckAgentJump(t, "e", agentOutcomeFailure, "d"),
+			),
 		},
 	)
 }
