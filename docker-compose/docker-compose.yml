@@ -5,5 +5,6 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       SA_PASSWORD: "!!up3R!!3cR37"
+      MSSQL_AGENT_ENABLED: "true"
     ports:
       - 1433:1433

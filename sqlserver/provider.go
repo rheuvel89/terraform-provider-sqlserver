@@ -22,6 +22,8 @@ type sqlserverProvider struct {
 	host    string
 	port    string
 	login   interface{}
+	// agentRegistry holds the agent step chain claims of the current Terraform command.
+	agentRegistry *agentPlanRegistry
 }
 
 const (
@@ -147,6 +149,11 @@ func Provider(factory model.ConnectorFactory) *schema.Provider {
 			"sqlserver_workload_group":      resourceWorkloadGroup(),
 			"sqlserver_resource_governor":   resourceResourceGovernor(),
 			"sqlserver_classifier_function": resourceClassifierFunction(),
+			"sqlserver_agent_operator":      resourceAgentOperator(),
+			"sqlserver_agent_job":           resourceAgentJob(),
+			"sqlserver_agent_schedule":      resourceAgentSchedule(),
+			"sqlserver_agent_job_schedule":  resourceAgentJobSchedule(),
+			"sqlserver_agent_job_step":      resourceAgentJobStep(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{},
 		ConfigureContextFunc: func(ctx context.Context, data *schema.ResourceData) (interface{}, diag.Diagnostics) {
@@ -191,7 +198,7 @@ func providerConfigure(ctx context.Context, data *schema.ResourceData, factory m
 
 	logger.Info().Msgf("Created provider with %s:%s", host, port)
 
-	return sqlserverProvider{factory: factory, logger: logger, host: host, port: port, login: login}, nil
+	return sqlserverProvider{factory: factory, logger: logger, host: host, port: port, login: login, agentRegistry: newAgentPlanRegistry()}, nil
 }
 
 func (p sqlserverProvider) GetConnector(data *schema.ResourceData) (interface{}, error) {

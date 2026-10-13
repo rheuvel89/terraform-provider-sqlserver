@@ -122,28 +122,16 @@ func (c *Connector) withSessionDrainRetry(ctx context.Context, drainFn func(cont
 	const maxAttempts = 5
 	const retryDelay = 500 * time.Millisecond
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if err := drainFn(ctx); err != nil {
-			return err
-		}
-
-		err := operationFn(ctx)
-		if err == nil {
-			return nil
-		}
-
-		if !isRetryableActiveSessionsError(err) || attempt == maxAttempts {
-			return err
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(retryDelay):
-		}
-	}
-
-	return nil
+	return withRetry(ctx, maxAttempts,
+		func(int) time.Duration { return retryDelay },
+		isRetryableActiveSessionsError,
+		func(ctx context.Context) error {
+			if err := drainFn(ctx); err != nil {
+				return err
+			}
+			return operationFn(ctx)
+		},
+	)
 }
 
 func isRetryableActiveSessionsError(err error) bool {

@@ -65,6 +65,12 @@ type TestConnector interface {
 	GetDatabase(name string) (*model.Database, error)
 	GetSystemUser() (string, error)
 	GetCurrentUser(database string) (string, string, error)
+	GetAgentOperator(operatorID int) (*model.AgentOperator, error)
+	GetAgentJob(jobID string) (*model.AgentJob, error)
+	GetAgentSchedule(scheduleID int) (*model.AgentSchedule, error)
+	GetAgentJobSchedule(jobID string, scheduleID int) (bool, error)
+	ListAgentJobSteps(jobID string) ([]model.AgentJobStep, error)
+	ExecContext(command string, args ...interface{}) error
 }
 
 type testConnector struct {
@@ -209,6 +215,30 @@ func (t testConnector) GetUser(database, name string) (*model.User, error) {
 
 func (t testConnector) GetDatabase(name string) (*model.Database, error) {
 	return t.c.(DatabaseConnector).GetDatabase(context.Background(), name)
+}
+
+func (t testConnector) GetAgentOperator(operatorID int) (*model.AgentOperator, error) {
+	return t.c.(AgentOperatorConnector).GetAgentOperator(context.Background(), operatorID)
+}
+
+func (t testConnector) GetAgentJob(jobID string) (*model.AgentJob, error) {
+	return t.c.(AgentJobConnector).GetAgentJob(context.Background(), jobID)
+}
+
+func (t testConnector) GetAgentSchedule(scheduleID int) (*model.AgentSchedule, error) {
+	return t.c.(AgentScheduleConnector).GetAgentSchedule(context.Background(), scheduleID)
+}
+
+func (t testConnector) GetAgentJobSchedule(jobID string, scheduleID int) (bool, error) {
+	return t.c.(AgentJobScheduleConnector).GetAgentJobSchedule(context.Background(), jobID, scheduleID)
+}
+
+func (t testConnector) ListAgentJobSteps(jobID string) ([]model.AgentJobStep, error) {
+	return t.c.(AgentJobStepConnector).ListAgentJobSteps(context.Background(), jobID)
+}
+
+func (t testConnector) ExecContext(command string, args ...interface{}) error {
+	return t.c.(*sql.Connector).ExecContext(context.Background(), command, args...)
 }
 
 func (t testConnector) GetSystemUser() (string, error) {
