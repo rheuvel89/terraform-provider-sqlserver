@@ -59,10 +59,11 @@ var (
 )
 
 const (
-	// Go's time.Parse takes its layout as the reference time Mon Jan 2 15:04:05 2006 written in the wanted format,
-	// not as letters like YYYY-MM-DD. These two are YYYY-MM-DD and HH:MM:SS (24-hour clock).
-	agentDateLayout     = "2006-01-02"
-	agentTimeLayout     = "15:04:05"
+	// YYYY-MM-DD and HH:MM:SS (24-hour clock), as Go time layouts. Go writes a layout as its fixed reference time
+	// Mon Jan 2 15:04:05 2006, where every number is a token: 2006 year, 01 month, 02 day, 15 hour (24-hour clock;
+	// 03 would be 12-hour), 04 minute, 05 second.
+	agentDateLayout     = time.DateOnly // "2006-01-02"
+	agentTimeLayout     = time.TimeOnly // "15:04:05"
 	agentMinDate        = "1990-01-01"
 	agentMaxDate        = "9999-12-31"
 	agentMinSubdaySecs  = 10
