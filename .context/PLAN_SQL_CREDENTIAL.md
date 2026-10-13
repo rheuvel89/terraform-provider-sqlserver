@@ -107,6 +107,13 @@ resource "sqlserver_credential" "backup" {
 - Import of existing credentials.
 - `sqlserver_database_scoped_credential` (with a database master key): Azure SQL Database, external data sources, `OPENROWSET`.
 - Login-to-credential mapping and SQL Server Agent proxies (only for non-T-SQL job steps, which the agent resources don't support).
+- **Azurite in the test fixtures** (decided 2026-10-13: once the preview is implemented and in use in production). Add the Azure Storage emulator to `test-fixtures/local` (and `test-fixtures/all`) so acceptance tests can run real `BACKUP … TO URL` / `RESTORE … FROM URL`. Most useful together with SAS support above, because it then tests provider code end to end: real SAS tokens, quoting of long secrets, and that an identity change resends the secret (a backup that still works after the change proves it, replacing the dedicated-admin-connection check). Setup from spike C5:
+  - Azurite (`mcr.microsoft.com/azure-storage/azurite`, `azurite-blob --blobPort 443 --cert … --key … --loose --skipApiVersionCheck`) in a Docker network shared with SQL Server, with the network alias `devstoreaccount1.blob.core.windows.net`;
+  - a test root CA and a server certificate for that name (`basicConstraints CA:FALSE`, `extendedKeyUsage serverAuth`, SAN), generated with Terraform's `tls` provider;
+  - the root CA copied to `/var/opt/mssql/security/ca-certificates` **before SQL Server starts** (the OS trust store isn't used);
+  - the container created with the Azure SDK or Azurite's REST API and Azurite's well-known development key; a container SAS for the credential.
+
+  It can't test managed identity authentication: that needs a real Managed Instance or an Arc-enabled SQL Server.
 
 ## 9. Spike results (2026-10-13, SQL Server 2022 in Docker)
 
