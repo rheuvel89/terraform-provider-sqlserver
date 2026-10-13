@@ -143,3 +143,13 @@ var agentStepFlags = map[string]int{
 	agentLogToTableProp:        8,
 	agentAppendLogToTableProp:  16,
 }
+
+const (
+	// Credential properties
+	credentialNameProp     = "name"
+	credentialIdentityProp = "identity"
+	credentialIdProp       = "credential_id"
+
+	// credentialManagedIdentity is the only identity the preview of sqlserver_credential supports.
+	credentialManagedIdentity = "Managed Identity"
+)
