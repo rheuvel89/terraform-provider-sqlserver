@@ -16,7 +16,7 @@ terraform {
     }
     sqlserver = {
       source  = "rheuvel89/sqlserver"
-      version = "0.6.0"
+      version = "0.5.1"
     }
   }
 }

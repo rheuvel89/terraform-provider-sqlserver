@@ -61,7 +61,7 @@ resource "sqlserver_credential" "backup" {
 - `sqlserver/provider.go`: register `sqlserver_credential`.
 - `sqlserver/provider_test.go`: `GetCredential` on `TestConnector`.
 - `sql/agent_common.go`: reuse the Azure SQL Database check (`EnsureAgentAvailable`) or add a general sibling with a message that fits credentials.
-- `docs/index.md`; version bump in `Makefile` (0.5.0 → 0.6.0).
+- `docs/index.md`; version bump in `Makefile` (0.5.0 → 0.5.1).
 
 ## 4. Tests
 - **Unit tests:** the `name` warning (trailing slash on a URL; none without) and the `identity` validation.
