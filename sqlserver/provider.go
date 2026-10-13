@@ -154,6 +154,7 @@ func Provider(factory model.ConnectorFactory) *schema.Provider {
 			"sqlserver_agent_schedule":      resourceAgentSchedule(),
 			"sqlserver_agent_job_schedule":  resourceAgentJobSchedule(),
 			"sqlserver_agent_job_step":      resourceAgentJobStep(),
+			"sqlserver_credential":          resourceCredential(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{},
 		ConfigureContextFunc: func(ctx context.Context, data *schema.ResourceData) (interface{}, diag.Diagnostics) {

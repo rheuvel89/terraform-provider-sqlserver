@@ -15,11 +15,16 @@ const (
 )
 
 // engineEditionAzureSQLDatabase is the SERVERPROPERTY('EngineEdition') value of Azure SQL Database,
-// which has no SQL Server Agent.
+// which has no SQL Server Agent and no server-level credentials.
 const engineEditionAzureSQLDatabase = 5
 
 // EnsureAgentAvailable returns a clear error when the server has no SQL Server Agent.
 func (c *Connector) EnsureAgentAvailable(ctx context.Context) error {
+	return c.ensureNotAzureSQLDatabase(ctx, "SQL Server Agent is not available on Azure SQL Database; agent resources need SQL Server (on-premises or VM) or Azure SQL Managed Instance")
+}
+
+// ensureNotAzureSQLDatabase returns an error with the given message when the server is Azure SQL Database.
+func (c *Connector) ensureNotAzureSQLDatabase(ctx context.Context, message string) error {
 	var edition int
 	err := c.QueryRowContext(ctx, `SELECT CAST(SERVERPROPERTY('EngineEdition') AS int)`,
 		func(r *sql.Row) error {
@@ -30,7 +35,7 @@ func (c *Connector) EnsureAgentAvailable(ctx context.Context) error {
 		return err
 	}
 	if edition == engineEditionAzureSQLDatabase {
-		return errors.New("SQL Server Agent is not available on Azure SQL Database; agent resources need SQL Server (on-premises or VM) or Azure SQL Managed Instance")
+		return errors.New(message)
 	}
 	return nil
 }

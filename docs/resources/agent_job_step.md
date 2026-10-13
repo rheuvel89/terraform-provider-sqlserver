@@ -104,10 +104,11 @@ jump is deleted, the jumping step falls back to its default action. A step can't
   Managed Instance.
 * `append_output_file` - (Optional) Append to `output_file_name` instead of overwriting it. Default is `false`.
 * `log_to_table` - (Optional) Write the step output to `msdb.dbo.sysjobstepslogs`, overwriting the previous entry.
-  Default is `false`.
+  Default is `false`. Unlike the job history, this keeps the full output.
 * `append_log_to_table` - (Optional) Write the step output to `msdb.dbo.sysjobstepslogs`, appending to the previous
   entry. Default is `false`.
-* `include_step_output_in_history` - (Optional) Include the step output in the job history. Default is `false`.
+* `include_step_output_in_history` - (Optional) Include the step output in the job history. Default is `false`. The
+  history keeps only about 4,000 characters per step; see [Where to Find a Step's Output](#where-to-find-a-steps-output).
 
 ## Attribute Reference
 
@@ -132,6 +133,17 @@ login that isn't sysadmin. A step that runs as a database user can't reach other
 SQL Server silently ignores `database_user_name` for jobs whose owner isn't sysadmin, and only a sysadmin can set it.
 The provider checks both during apply and fails with a clear error instead. Changing the job's owner later isn't
 checked again until the step itself changes.
+
+## Where to Find a Step's Output
+
+| Where | How to read it | Size | Notes |
+|---|---|---|---|
+| Job history | SSMS (View History), `EXEC msdb.dbo.sp_help_jobhistory @job_name = N'…', @mode = N'FULL'`, or `msdb.dbo.sysjobhistory` | about 4,000 characters per step (`nvarchar(4000)`) | Holds the step's messages and errors. When the output is longer, the history keeps roughly the **first** 4,000 characters, marks the cut with `...` and **drops the rest, including the error that failed the step**. |
+| Table log | `EXEC msdb.dbo.sp_help_jobsteplog @job_name = N'…'`, or `msdb.dbo.sysjobstepslogs` | no limit (`nvarchar(max)`) | Needs `log_to_table` (overwritten on each run) or `append_log_to_table` (kept across runs; clear it with `msdb.dbo.sp_delete_jobsteplog`). Deleted together with the step, including when the provider moves the step (a move deletes the step and adds it again). |
+| Output file | the file in `output_file_name` | no limit | On the server's file system; not supported on Azure SQL Managed Instance. |
+
+For steps whose output can be long, such as a step that loops over many databases, set `log_to_table = true` and look
+there first: the job history may have cut off exactly the part that says why the step failed.
 
 ## Limits
 
