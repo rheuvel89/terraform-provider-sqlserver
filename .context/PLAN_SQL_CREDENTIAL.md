@@ -133,7 +133,7 @@ Implemented as planned on `feature/sql_credential` (PR #15). Where the implement
   - the generated `BACKUP` statements were printed and checked, including a database name with a quote and a space;
   - run with sqlcmd and as a real SQL Server Agent job created by the provider: every user database is attempted, each failure shows SQL Server's real reason, and the step ends with an error listing the failed databases;
   - the first version wrapped each backup in `TRY/CATCH`, which only keeps SQL Server's last, generic error ("BACKUP DATABASE is terminating abnormally") and loses the cause (e.g. the managed identity or TDE error). The example lets errors flow to the step output instead and tracks failures with `@@ERROR`;
-  - the job history keeps about 4000 characters per step, so the example also sets `log_to_table`: the full output is in `msdb.dbo.sysjobstepslogs`.
+  - the job history (`sysjobhistory.message`, `nvarchar(4000)`) keeps roughly the **first** 4000 characters of a step's output, marks the cut with `...` and drops the rest, **including the error that failed the step** (tested with ~9,800 characters of output). So the example sets `log_to_table`: `msdb.dbo.sysjobstepslogs` (`nvarchar(max)`, read with `sp_help_jobsteplog`) kept all of it. The table log is deleted with the step (`ON DELETE CASCADE`), so also when the provider moves the step. Documented in `agent_job_step.md` ("Where to Find a Step's Output"), with the `backupset`/`backupmediafamily` query for the stripe URLs in `credential.md` and the example.
 - `terraform validate` passes for the example (with azurerm 4.81.0).
 - Still open: spike C4, a run on a real Managed Instance.
 

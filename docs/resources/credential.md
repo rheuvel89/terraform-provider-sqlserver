@@ -59,6 +59,23 @@ resource "sqlserver_agent_job_step" "backup" {
 On Azure SQL Managed Instance only `COPY_ONLY` full backups are allowed, and databases encrypted with service-managed
 TDE can't be backed up by users. See the example for these and other rules.
 
+## Checking the Backups
+
+* **Why a backup failed:** with `log_to_table = true` on the job step, `EXEC msdb.dbo.sp_help_jobsteplog @job_name = N'…'`
+  shows the full output. The job history keeps only the first ~4,000 characters of a step's output and can drop the
+  error that matters; see [Where to Find a Step's Output](agent_job_step.md#where-to-find-a-steps-output).
+* **What was backed up, and where:** every backup is recorded in `msdb`, with the URL of each stripe, which a restore
+  needs:
+
+  ```sql
+  SELECT b.database_name, b.backup_finish_date, b.is_copy_only,
+         f.family_sequence_number AS stripe, f.physical_device_name AS url
+  FROM msdb.dbo.backupset AS b
+  JOIN msdb.dbo.backupmediafamily AS f ON f.media_set_id = b.media_set_id
+  WHERE f.device_type = 9 -- URL
+  ORDER BY b.backup_finish_date DESC, f.family_sequence_number;
+  ```
+
 ## Permissions
 
 Creating and deleting credentials needs `ALTER ANY CREDENTIAL`. SQL Server refuses to delete a credential that a SQL

@@ -5,7 +5,19 @@
 # sqlserver_credential is a preview and only supports managed identity credentials.
 #
 # Before applying, check the Managed Instance backup rules at the step below. The backup script was checked against
-# SQL Server 2022; run the job once on your instance and check its history before relying on it.
+# SQL Server 2022; run the job once on your instance and check its output before relying on it.
+#
+# Checking the backups:
+# - Start the job by hand:  EXEC msdb.dbo.sp_start_job @job_name = N'backup_to_url';
+# - The step's full output, with the real reason for every failed database:
+#     EXEC msdb.dbo.sp_help_jobsteplog @job_name = N'backup_to_url';
+#   The job history (SSMS "View History", msdb.dbo.sysjobhistory) keeps only the first ~4,000 characters per step.
+# - Every successful backup with the URL of each stripe, which a restore needs:
+#     SELECT b.database_name, b.backup_finish_date, f.family_sequence_number AS stripe, f.physical_device_name AS url
+#     FROM msdb.dbo.backupset AS b
+#     JOIN msdb.dbo.backupmediafamily AS f ON f.media_set_id = b.media_set_id
+#     WHERE f.device_type = 9 -- URL
+#     ORDER BY b.backup_finish_date DESC, f.family_sequence_number;
 #
 terraform {
   required_version = "~> 1.5"
@@ -102,8 +114,10 @@ resource "sqlserver_agent_job_step" "backup" {
   job_id                         = sqlserver_agent_job.backup.job_id
   name                           = "backup_user_databases"
   include_step_output_in_history = true
-  log_to_table                   = true # the full output, in msdb.dbo.sysjobstepslogs; the history keeps ~4000 characters
-  command                        = <<-SQL
+  # The job history keeps only the first ~4,000 characters of the output and drops the rest, including the error that
+  # lists the failed databases. The table log keeps everything (see "Checking the backups" at the top).
+  log_to_table = true
+  command      = <<-SQL
     DECLARE @container nvarchar(400) = N'${sqlserver_credential.backups.name}';
     DECLARE @stamp nvarchar(20) = FORMAT(SYSUTCDATETIME(), 'yyyyMMdd_HHmmss');
     DECLARE @db sysname, @data_gb decimal(18, 2), @stripes int, @i int, @urls nvarchar(max), @sql nvarchar(max);
