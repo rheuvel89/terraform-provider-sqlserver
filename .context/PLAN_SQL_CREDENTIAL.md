@@ -11,14 +11,14 @@ See https://learn.microsoft.com/en-us/sql/t-sql/statements/create-credential-tra
 
 | Topic | Decision |
 |---|---|
-| Scope | **Server-level credentials only** (`CREATE CREDENTIAL`, `sys.credentials`). Database-scoped credentials (`CREATE DATABASE SCOPED CREDENTIAL`, needed on Azure SQL Database and for external data sources) are a different statement, need a database master key, and live in another catalog view; they're a possible follow-up resource (section 8). |
+| Scope | **Server-level credentials only** (`CREATE CREDENTIAL`, `sys.credentials`); database-scoped credentials are out of scope for now (decided 2026-10-13). Database-scoped credentials (`CREATE DATABASE SCOPED CREDENTIAL`, needed on Azure SQL Database and for external data sources) are a different statement, need a database master key, and live in another catalog view; they're a possible follow-up resource (section 8). |
 | Platforms | SQL Server (on-premises or VM) and Azure SQL Managed Instance. Azure SQL Database has no server-level credentials and fails with a clear error, like the agent resources. |
 | Identity | `name` is the ID. Names are case-insensitive and can't be renamed (spike C1), so `name` is ForceNew. |
 | Secret | Optional. Either `secret` (Sensitive, stored in state) or the write-only `secret_wo` + `secret_wo_version`, mirroring `password` / `password_wo` on `sqlserver_login`. Neither is required: a managed identity credential has no secret. |
 | Secret drift | Not detectable: SQL Server never exposes the secret (`sys.credentials` has no secret column; only the dedicated admin connection can see that one exists, spike C2). Documented. |
 | Updates | `identity` and the secret change in place with `ALTER CREDENTIAL`. **Every `ALTER` resends the secret**, because `ALTER CREDENTIAL` without `SECRET` deletes the stored secret (spike C3). |
 | Cryptographic providers (EKM) | Out of scope (`FOR CRYPTOGRAPHIC PROVIDER`). |
-| Import | Supported, by name, like `sqlserver_login` and `sqlserver_database`. The secret can't be imported; after an import, set `secret_wo` (or `secret`) and apply. |
+| Import | Not supported for now (decided 2026-10-13); the immediate goal is backup to a storage account with a managed identity. |
 
 ## 2. Resource schema
 
@@ -62,15 +62,14 @@ resource "sqlserver_credential" "backup_sas" {
 - **Read:** `SELECT credential_id, credential_identity FROM sys.credentials WHERE name = @name`. Not found → clear the ID. `secret` stays as in state.
 - **Update:** `ALTER CREDENTIAL ... WITH IDENTITY = ..., SECRET = ...` whenever `identity`, `secret` or `secret_wo_version` changes, always with the current secret: `secret` from state/config, `secret_wo` from the raw config of this apply (available in every apply where it's set), or no `SECRET` clause when neither is set.
 - **Delete:** `IF EXISTS ... DROP CREDENTIAL`. SQL Server refuses while the credential is used by a SQL Server Agent proxy or mapped to a login (`ALTER LOGIN ... WITH CREDENTIAL`); the error is passed through with the credential name.
-- **Import:** by ID or name; reads `identity`; secrets stay empty.
 
 ## 3. Code layout (following the existing layering)
 
 **New files**
 - `sqlserver/model/credential.go`: `Credential{ID int; Name, Identity string}`.
 - `sql/credential.go`: `GetCredential`, `CreateCredential(name, identity, secret *string)`, `UpdateCredential(...)`, `DeleteCredential` on `*Connector`, in the style of `sql/login.go`. A `nil` secret means "no SECRET clause".
-- `sqlserver/resource_credential.go`: `CredentialConnector` interface, schema, CustomizeDiff, CRUD, import, `getCredentialID`, `getCredentialConnector`.
-- `sqlserver/resource_credential_test.go`, `resource_credential_import_test.go`.
+- `sqlserver/resource_credential.go`: `CredentialConnector` interface, schema, CustomizeDiff, CRUD, `getCredentialID`, `getCredentialConnector`.
+- `sqlserver/resource_credential_test.go`.
 - `docs/resources/credential.md`.
 - `examples/backup_to_url/main.tf`: credential plus an agent job that backs up every user database to the container (see section 5).
 
@@ -91,8 +90,7 @@ resource "sqlserver_credential" "backup_sas" {
   3. `secret_wo` + `secret_wo_version`: create, bump the version to rotate, and **check through the dedicated admin connection that the secret is still set after an identity-only change** (spike C3: a missing `SECRET` would delete it). The DAC check is test-only.
   4. A secret longer than 128 characters with quotes in it (covers the `QUOTENAME` trap).
   5. Deleted outside Terraform → recreated.
-  6. Import by name.
-  7. Plan-time errors (`ExpectError`) for the CustomizeDiff rules.
+  6. Plan-time errors (`ExpectError`) for the CustomizeDiff rules.
 - Not testable locally: an actual `BACKUP TO URL` (needs Azure Storage, and on MI a managed identity). Documented; the example in section 5 is applied once against a real Managed Instance before release if one is available.
 
 ## 5. Docs and examples
@@ -115,7 +113,7 @@ resource "sqlserver_credential" "backup_sas" {
 ## 6. Implementation order
 1. Spikes (done for C1–C3, see section 9; C4 still open).
 2. Model, SQL layer and the quoting unit test.
-3. Resource with `secret`, then `secret_wo`, CustomizeDiff and import.
+3. Resource with `secret`, then `secret_wo` and CustomizeDiff.
 4. Acceptance tests.
 5. Docs, the backup example, `docs/index.md`, version bump.
 
@@ -126,6 +124,7 @@ resource "sqlserver_credential" "backup_sas" {
 - A SAS secret starting with `?` and a SAS credential without a secret are errors: neither can ever work. A managed identity credential with a secret and a URL name with a trailing slash are warnings.
 
 ## 8. Follow-ups (out of scope)
+- Import of existing credentials.
 - `sqlserver_database_scoped_credential` (needs a `sqlserver_database_master_key` too): for Azure SQL Database, external data sources and `OPENROWSET`.
 - Login-to-credential mapping (`ALTER LOGIN ... WITH CREDENTIAL`) and SQL Server Agent proxies (only relevant for non-T-SQL job steps, which the agent resources don't support).
 
