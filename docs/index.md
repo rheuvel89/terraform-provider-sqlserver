@@ -74,6 +74,7 @@ The following resources are available:
 * [sqlserver_agent_schedule](resources/agent_schedule.md) - Manages SQL Server Agent schedules
 * [sqlserver_agent_job_schedule](resources/agent_job_schedule.md) - Attaches schedules to SQL Server Agent jobs
 * [sqlserver_agent_operator](resources/agent_operator.md) - Manages SQL Server Agent operators for job notifications
+* [sqlserver_credential](resources/credential.md) - (Preview) Manages managed identity credentials for backup to and restore from Azure Blob Storage
 
 ## Examples
 
@@ -85,3 +86,4 @@ Complete examples can be found in the `examples/` directory:
 * `examples/resource_governor/` - Resource Governor configuration with pools and workload groups
 * `examples/agent_job/` - A SQL Server Agent job with chained steps, a failure step, a shared schedule and email notification
 * `examples/agent_schedule/` - Common SQL Server Agent schedules
+* `examples/backup_to_url/` - Nightly backups of every database on Azure SQL Managed Instance to a storage account with the instance's managed identity

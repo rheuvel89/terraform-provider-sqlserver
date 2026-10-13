@@ -125,3 +125,15 @@ resource "sqlserver_credential" "backup" {
 | C4 | `Managed Identity` and `BACKUP TO URL` on Managed Instance | Creating a `Managed Identity` credential works on SQL Server 2022 in Docker (it's only stored). Whether the backup itself works needs a real Managed Instance and storage account. **Open.** |
 | C5 | Can backup to URL be tested locally with Azurite (the Azure Storage emulator)? | **Yes, with a SAS credential; not with a managed identity.** Setup that worked: Azurite on HTTPS port 443 in a Docker network, reachable from the SQL Server container as `devstoreaccount1.blob.core.windows.net` (network alias), with a certificate for that name signed by a test root CA. SQL Server on Linux only trusts the CA from **`/var/opt/mssql/security/ca-certificates`** (read at startup: "Number of Files Processed … 1"); the OS trust store (`update-ca-certificates`) isn't used, and without the CA there `BACKUP TO URL` fails with OS error 12175 (TLS failure). With a SAS credential (`generate_container_sas` from the Azure SDK, Azurite's well-known development key): a `COPY_ONLY, COMPRESSION, CHECKSUM` backup, a striped backup over two URLs with `MAXTRANSFERSIZE = 4194304`, `RESTORE VERIFYONLY` and a restore to a new database all worked. A `Managed Identity` credential fails with error 37563 "The primary managed identity is not selected for this server", which confirms SQL Server always uses the server's primary managed identity. |
 
+## 10. Implementation notes (2026-10-13)
+Implemented as planned on `feature/sql_credential` (PR #15). Where the implementation adds to the plan:
+- **Azure SQL Database check** is shared with the agent resources (`ensureNotAzureSQLDatabase`), each with its own message.
+- **Name length guard:** besides the plan-time 1–128 character check, the `CREATE` batch throws if `QUOTENAME` returns NULL, so a too-long name can never silently run nothing.
+- **Example backup script, checked locally** (Azurite was stopped by then, so without storage behind the URL):
+  - the generated `BACKUP` statements were printed and checked, including a database name with a quote and a space;
+  - run with sqlcmd and as a real SQL Server Agent job created by the provider: every user database is attempted, each failure shows SQL Server's real reason, and the step ends with an error listing the failed databases;
+  - the first version wrapped each backup in `TRY/CATCH`, which only keeps SQL Server's last, generic error ("BACKUP DATABASE is terminating abnormally") and loses the cause (e.g. the managed identity or TDE error). The example lets errors flow to the step output instead and tracks failures with `@@ERROR`;
+  - the job history keeps about 4000 characters per step, so the example also sets `log_to_table`: the full output is in `msdb.dbo.sysjobstepslogs`.
+- `terraform validate` passes for the example (with azurerm 4.81.0).
+- Still open: spike C4, a run on a real Managed Instance.
+
