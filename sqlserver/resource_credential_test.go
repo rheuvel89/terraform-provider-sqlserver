@@ -1,6 +1,7 @@
 package sqlserver
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"regexp"
@@ -207,4 +208,153 @@ func testAccCheckCredentialDestroy(names ...string) resource.TestCheckFunc {
 		}
 		return nil
 	}
+}
+
+func TestAccCredential_Local_IdentityCaseAndDrift(t *testing.T) {
+	config := func(identity string) string {
+		return testAccProviderBlock + fmt.Sprintf(`
+          resource "sqlserver_credential" "backup" {
+            name     = %q
+            identity = %q
+          }`, testCredentialName, identity)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      testAccCheckCredentialDestroy(testCredentialName),
+		Steps: []resource.TestStep{
+			{
+				// Any case is accepted and stored as written, so the plan afterwards is empty (checked by the framework).
+				Config: config("managed identity"),
+				Check:  testAccCheckCredential(testCredentialName, "managed identity"),
+			},
+			{
+				// Changing only the case in the config replaces the credential, since identity is ForceNew.
+				Config: config("Managed Identity"),
+				Check:  testAccCheckCredential(testCredentialName, "Managed Identity"),
+			},
+			{
+				// The identity is changed outside Terraform while the config stays the same: the refresh must notice,
+				// and the apply replaces the credential.
+				PreConfig: func() {
+					connector, err := getTestConnector(nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err = connector.ExecContext(`DECLARE @sql nvarchar(max) = N'ALTER CREDENTIAL ' + QUOTENAME(@name) + N' WITH IDENTITY = N''SHARED ACCESS SIGNATURE'''; EXEC (@sql)`,
+						sql.Named("name", testCredentialName)); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Config: config("Managed Identity"),
+				Check:  testAccCheckCredential(testCredentialName, "Managed Identity"),
+			},
+		},
+	})
+}
+
+func TestAccCredential_Local_SpecialCharacters(t *testing.T) {
+	// Brackets and quotes must survive the dynamic CREATE and DROP statements, and a 128-character name (the maximum)
+	// must work.
+	names := []string{
+		"https://tftestbackupsa.blob.core.windows.net/it's]a[test",
+		strings.Repeat("c", 121) + "]'][x'y",
+	}
+	var config strings.Builder
+	config.WriteString(testAccProviderBlock)
+	for i, name := range names {
+		fmt.Fprintf(&config, `
+          resource "sqlserver_credential" "c%d" {
+            name     = %q
+            identity = "Managed Identity"
+          }`, i, name)
+	}
+	if len([]rune(names[1])) != 128 {
+		t.Fatalf("the long name has %d characters, want 128", len([]rune(names[1])))
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      testAccCheckCredentialDestroy(names...),
+		Steps: []resource.TestStep{
+			{
+				Config: config.String(),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckCredential(names[0], "Managed Identity"),
+					testAccCheckCredential(names[1], "Managed Identity"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccCredential_Local_NameTooLongForQuotename(t *testing.T) {
+	// The plan-time check stops names over 128 characters, so call the SQL layer directly: QUOTENAME returns NULL for
+	// them, and the statement must fail instead of silently running nothing.
+	if !runLocalAccTests {
+		t.Skip("needs a SQL Server (TF_ACC_LOCAL)")
+	}
+	testAccPreCheck(t)
+	connector, err := getTestConnector(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := strings.Repeat("d", 129)
+	err = connector.(testConnector).c.(CredentialConnector).CreateCredential(context.Background(), name, "Managed Identity")
+	if err == nil || !strings.Contains(err.Error(), "longer than 128 characters") {
+		t.Fatalf("expected the 128-character error, got %v", err)
+	}
+	if cred, err := connector.GetCredential(name); err != nil || cred != nil {
+		t.Fatalf("no credential should exist, got %v, %v", cred, err)
+	}
+}
+
+func TestAccCredential_Local_DeleteWhileInUse(t *testing.T) {
+	// SQL Server refuses to drop a credential a login is mapped to; the error must reach the user, with the name.
+	const login = "tf_test_credential_login"
+	if runLocalAccTests {
+		defer func() {
+			connector, _ := getTestConnector(nil)
+			_ = connector.ExecContext(`DECLARE @sql nvarchar(max) = N'DROP LOGIN ' + QUOTENAME(@login); IF SUSER_ID(@login) IS NOT NULL EXEC (@sql)`, sql.Named("login", login))
+		}()
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		IsUnitTest:        runLocalAccTests,
+		ProviderFactories: testAccProviders,
+		CheckDestroy:      testAccCheckCredentialDestroy(testCredentialName),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCredentialConfig(testCredentialName),
+				Check: func(*terraform.State) error {
+					connector, err := getTestConnector(nil)
+					if err != nil {
+						return err
+					}
+					return connector.ExecContext(`DECLARE @sql nvarchar(max) = N'CREATE LOGIN ' + QUOTENAME(@login) + N' WITH PASSWORD = ''Cred!Passw0rd1'', CREDENTIAL = ' + QUOTENAME(@name); EXEC (@sql)`,
+						sql.Named("login", login), sql.Named("name", testCredentialName))
+				},
+			},
+			{
+				Config:      testAccProviderBlock,
+				ExpectError: regexp.MustCompile(`unable to delete credential \[` + regexp.QuoteMeta(testCredentialName) + `\]`),
+			},
+			{
+				// Remove the login that uses the credential, then the credential can be deleted.
+				PreConfig: func() {
+					connector, err := getTestConnector(nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err = connector.ExecContext(`DECLARE @sql nvarchar(max) = N'DROP LOGIN ' + QUOTENAME(@login); EXEC (@sql)`,
+						sql.Named("login", login)); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Config: testAccProviderBlock,
+			},
+		},
+	})
 }
