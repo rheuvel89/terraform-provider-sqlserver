@@ -54,18 +54,11 @@ func (c *Connector) agentExec(ctx context.Context, command string, args ...inter
 }
 
 func retryOnDeadlock(ctx context.Context, f func() error) error {
-	var err error
-	for attempt := 1; attempt <= agentDeadlockAttempts; attempt++ {
-		if err = f(); !isDeadlockVictim(err) {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return err
-		case <-time.After(time.Duration(attempt*100) * time.Millisecond):
-		}
-	}
-	return err
+	return withRetry(ctx, agentDeadlockAttempts,
+		func(attempt int) time.Duration { return time.Duration(attempt*100) * time.Millisecond },
+		isDeadlockVictim,
+		func(context.Context) error { return f() },
+	)
 }
 
 func isDeadlockVictim(err error) bool {

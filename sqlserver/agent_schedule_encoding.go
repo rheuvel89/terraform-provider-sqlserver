@@ -59,6 +59,8 @@ var (
 )
 
 const (
+	// Go's time.Parse takes its layout as the reference time Mon Jan 2 15:04:05 2006 written in the wanted format,
+	// not as letters like YYYY-MM-DD. These two are YYYY-MM-DD and HH:MM:SS (24-hour clock).
 	agentDateLayout     = "2006-01-02"
 	agentTimeLayout     = "15:04:05"
 	agentMinDate        = "1990-01-01"
@@ -195,68 +197,103 @@ func decodeAgentSchedule(s model.AgentSchedule) agentScheduleSpec {
 	return spec
 }
 
-// validateAgentScheduleSpec checks the combination of attributes against the frequency type.
-// Attributes listed in unknown haven't been resolved yet (plan time) and are skipped.
+// validateAgentScheduleSpec checks the combination of attributes against the frequency type and returns the first
+// problem. Attributes listed in unknown haven't been resolved yet (plan time) and are skipped.
 func validateAgentScheduleSpec(spec agentScheduleSpec, unknown map[string]bool) error {
-	ft := spec.FrequencyType
-	// expect checks that an attribute is set exactly when the frequency type uses it.
-	expect := func(name string, wanted, isSet bool) error {
-		switch {
-		case unknown[name] || wanted == isSet:
-			return nil
-		case wanted:
-			return fmt.Errorf("%s is required when frequency_type is %q", name, ft)
-		default:
-			return fmt.Errorf("%s can't be set when frequency_type is %q", name, ft)
-		}
-	}
-
-	checks := []error{
-		expect("weekly_days", ft == "weekly", len(spec.WeeklyDays) > 0),
-		expect("monthly_day", ft == "monthly", spec.MonthlyDay != 0),
-		expect("monthly_relative_week", ft == "monthly_relative", spec.MonthlyRelativeWeek != ""),
-		expect("monthly_relative_day", ft == "monthly_relative", spec.MonthlyRelativeDay != ""),
-	}
-
-	if !isRecurring(ft) {
-		if spec.RecurrenceFactor > 1 && !unknown["recurrence_factor"] {
-			checks = append(checks, fmt.Errorf("recurrence_factor can't be set when frequency_type is %q", ft))
-		}
-		if spec.SubdayType != "once" && !unknown["subday_type"] {
-			checks = append(checks, fmt.Errorf("subday_type can't be set when frequency_type is %q", ft))
-		}
-		checks = append(checks, expect("subday_interval", false, spec.SubdayInterval != 0))
-	} else if !unknown["subday_type"] && !unknown["subday_interval"] {
-		switch {
-		case spec.SubdayType == "once" && spec.SubdayInterval != 0:
-			checks = append(checks, fmt.Errorf("subday_interval can't be set when subday_type is \"once\""))
-		case spec.SubdayType != "once" && spec.SubdayInterval < 1:
-			checks = append(checks, fmt.Errorf("subday_interval is required when subday_type is %q", spec.SubdayType))
-		case spec.SubdayType == "seconds" && spec.SubdayInterval < agentMinSubdaySecs:
-			checks = append(checks, fmt.Errorf("subday_interval must be at least %d when subday_type is \"seconds\" (SQL Server Agent's minimum)", agentMinSubdaySecs))
-		}
-	}
-
-	if spec.ActiveStartDate != "" && spec.ActiveEndDate != "" && !unknown["active_start_date"] && !unknown["active_end_date"] {
-		start, errStart := parseAgentDate(spec.ActiveStartDate)
-		end, errEnd := parseAgentDate(spec.ActiveEndDate)
-		if errStart == nil && errEnd == nil && end < start {
-			checks = append(checks, fmt.Errorf("active_end_date (%s) is before active_start_date (%s)", spec.ActiveEndDate, spec.ActiveStartDate))
-		}
-	}
-
-	if !unknown["active_end_time"] && spec.ActiveEndTime == "00:00:00" {
-		checks = append(checks, fmt.Errorf("active_end_time can't be \"00:00:00\": SQL Server stores it as %q; use %q for \"until midnight\"", agentDefaultEndTime, agentDefaultEndTime))
-	}
-	if isRecurring(ft) && spec.SubdayType != "once" && spec.ActiveStartTime == spec.ActiveEndTime &&
-		!unknown["active_start_time"] && !unknown["active_end_time"] && !unknown["subday_type"] {
-		checks = append(checks, fmt.Errorf("active_start_time and active_end_time can't be equal when subday_type is %q", spec.SubdayType))
-	}
-
-	for _, err := range checks {
-		if err != nil {
+	for _, check := range []func(agentScheduleSpec, map[string]bool) error{
+		validateAgentFrequencyFields,
+		validateAgentSubday,
+		validateAgentActiveDates,
+		validateAgentActiveTimes,
+	} {
+		if err := check(spec, unknown); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateAgentFrequencyFields checks that each frequency-specific attribute is set exactly when the frequency
+// type uses it.
+func validateAgentFrequencyFields(spec agentScheduleSpec, unknown map[string]bool) error {
+	ft := spec.FrequencyType
+	fields := []struct {
+		name          string
+		wanted, isSet bool
+	}{
+		{"weekly_days", ft == "weekly", len(spec.WeeklyDays) > 0},
+		{"monthly_day", ft == "monthly", spec.MonthlyDay != 0},
+		{"monthly_relative_week", ft == "monthly_relative", spec.MonthlyRelativeWeek != ""},
+		{"monthly_relative_day", ft == "monthly_relative", spec.MonthlyRelativeDay != ""},
+	}
+	if !isRecurring(ft) {
+		// recurrence_factor defaults to 1, so only a larger value counts as set.
+		fields = append(fields, struct {
+			name          string
+			wanted, isSet bool
+		}{"recurrence_factor", false, spec.RecurrenceFactor > 1})
+	}
+	for _, f := range fields {
+		switch {
+		case unknown[f.name] || f.wanted == f.isSet:
+		case f.wanted:
+			return fmt.Errorf("%s is required when frequency_type is %q", f.name, ft)
+		default:
+			return fmt.Errorf("%s can't be set when frequency_type is %q", f.name, ft)
+		}
+	}
+	return nil
+}
+
+// validateAgentSubday checks subday_type and subday_interval: they only apply to recurring schedules, and the
+// interval is required for anything but "once", with SQL Server Agent's minimum of 10 seconds.
+func validateAgentSubday(spec agentScheduleSpec, unknown map[string]bool) error {
+	if unknown["subday_type"] || unknown["subday_interval"] {
+		return nil
+	}
+	if !isRecurring(spec.FrequencyType) {
+		switch {
+		case spec.SubdayType != "once":
+			return fmt.Errorf("subday_type can't be set when frequency_type is %q", spec.FrequencyType)
+		case spec.SubdayInterval != 0:
+			return fmt.Errorf("subday_interval can't be set when frequency_type is %q", spec.FrequencyType)
+		}
+		return nil
+	}
+	switch {
+	case spec.SubdayType == "once" && spec.SubdayInterval != 0:
+		return fmt.Errorf("subday_interval can't be set when subday_type is \"once\"")
+	case spec.SubdayType != "once" && spec.SubdayInterval < 1:
+		return fmt.Errorf("subday_interval is required when subday_type is %q", spec.SubdayType)
+	case spec.SubdayType == "seconds" && spec.SubdayInterval < agentMinSubdaySecs:
+		return fmt.Errorf("subday_interval must be at least %d when subday_type is \"seconds\" (SQL Server Agent's minimum)", agentMinSubdaySecs)
+	}
+	return nil
+}
+
+// validateAgentActiveDates checks that the end date isn't before the start date. The dates themselves are checked
+// by validateAgentDate.
+func validateAgentActiveDates(spec agentScheduleSpec, unknown map[string]bool) error {
+	if spec.ActiveStartDate == "" || spec.ActiveEndDate == "" || unknown["active_start_date"] || unknown["active_end_date"] {
+		return nil
+	}
+	start, errStart := parseAgentDate(spec.ActiveStartDate)
+	end, errEnd := parseAgentDate(spec.ActiveEndDate)
+	if errStart == nil && errEnd == nil && end < start {
+		return fmt.Errorf("active_end_date (%s) is before active_start_date (%s)", spec.ActiveEndDate, spec.ActiveStartDate)
+	}
+	return nil
+}
+
+// validateAgentActiveTimes rejects the time windows SQL Server would change or refuse. An end time before the start
+// time is allowed: it's a window that crosses midnight.
+func validateAgentActiveTimes(spec agentScheduleSpec, unknown map[string]bool) error {
+	if !unknown["active_end_time"] && spec.ActiveEndTime == "00:00:00" {
+		return fmt.Errorf("active_end_time can't be \"00:00:00\": SQL Server stores it as %q; use %q for \"until midnight\"", agentDefaultEndTime, agentDefaultEndTime)
+	}
+	if isRecurring(spec.FrequencyType) && spec.SubdayType != "once" && spec.ActiveStartTime == spec.ActiveEndTime &&
+		!unknown["active_start_time"] && !unknown["active_end_time"] && !unknown["subday_type"] {
+		return fmt.Errorf("active_start_time and active_end_time can't be equal when subday_type is %q", spec.SubdayType)
 	}
 	return nil
 }

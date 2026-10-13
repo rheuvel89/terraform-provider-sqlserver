@@ -112,7 +112,8 @@ jump is deleted, the jumping step falls back to its default action. A step can't
 ## Attribute Reference
 
 * `id` - The step's ID, used as `previous_step_id` by the next step.
-* `step_id` - The step's current position in the job.
+* `step_id` - The step's position in the job as of the last refresh. When other steps are inserted or deleted,
+  it's updated on the next plan or refresh; the provider never uses it to find the step.
 * `step_uid` - The GUID of the step. It changes when the step moves.
 
 ## Who a Step Runs As

@@ -28,6 +28,9 @@ func (c *Connector) CreateAgentJobSchedule(ctx context.Context, jobID string, sc
 }
 
 // DeleteAgentJobSchedule detaches the schedule from the job but never deletes the schedule, which is managed separately.
+// Terraform detaches a schedule before deleting it, since the attachment depends on the schedule; sp_delete_schedule
+// with @force_delete = 0 refuses to delete a schedule that is still attached. When a schedule is deleted outside
+// Terraform, SQL Server removes its attachments and the next refresh drops this resource from the state.
 func (c *Connector) DeleteAgentJobSchedule(ctx context.Context, jobID string, scheduleID int) error {
 	return c.agentExec(ctx,
 		`IF EXISTS (SELECT 1 FROM [msdb].[dbo].[sysjobschedules]

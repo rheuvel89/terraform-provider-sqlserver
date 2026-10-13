@@ -161,7 +161,7 @@ func resourceAgentJobStep() *schema.Resource {
 			agentStepIdProp: {
 				Type:        schema.TypeInt,
 				Computed:    true,
-				Description: "The step's current position in the job.",
+				Description: "The step's position in the job as of the last refresh. When other steps are inserted or deleted, it's updated on the next plan or refresh.",
 			},
 			agentStepUidProp: {
 				Type:        schema.TypeString,

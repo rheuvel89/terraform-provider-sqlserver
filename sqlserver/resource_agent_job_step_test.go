@@ -626,3 +626,39 @@ func TestAccAgentJobStep_Local_MoveToAnotherJob(t *testing.T) {
 		},
 	)
 }
+
+func TestAccAgentJobStep_Local_Reorder(t *testing.T) {
+	// Every kind of chain change converges in one apply with an empty plan afterwards (the test framework checks the
+	// plan after each step). TestAccAgentJobStep_Local_Chain covers inserting in the middle, deleting from the middle
+	// and moving to the head.
+	const job = "tf_test_step_reorder"
+	chain := func(names ...string) []testStep {
+		steps := make([]testStep, len(names))
+		for i, n := range names {
+			steps[i] = testStep{name: n}
+			if i > 0 {
+				steps[i].after = names[i-1]
+			}
+		}
+		return steps
+	}
+	step := func(comment string, names ...string) resource.TestStep {
+		return resource.TestStep{
+			Config: testAccAgentJobStepsConfig(job, chain(names...)...),
+			// The order is checked in msdb: step_id in the state of a step that didn't change itself is only updated
+			// on the next refresh.
+			Check: testAccCheckAgentJobStepOrder(t, names...),
+		}
+	}
+	testAccAgentJobStepCase(t,
+		step("create", "a", "b", "c"),
+		step("append at the end", "a", "b", "c", "d"),
+		step("remove the last step", "a", "b", "c"),
+		step("remove the first step: b becomes the first step", "b", "c"),
+		step("swap the only two steps", "c", "b"),
+		step("add a new first step", "a", "c", "b"),
+		step("move a middle step to the end", "a", "b", "c"),
+		step("reverse the whole chain", "c", "b", "a"),
+		step("replace the chain with new steps and one old one", "x", "b", "y"),
+	)
+}

@@ -90,7 +90,8 @@ func (c *Connector) UpdateAgentJob(ctx context.Context, job *model.AgentJob) err
 	)
 }
 
-// DeleteAgentJob deletes the job but never its schedules, which are managed separately.
+// DeleteAgentJob deletes the job. sp_delete_job itself deletes the job's steps, its target server and its schedule
+// attachments; @delete_unused_schedule = 0 keeps the schedules themselves, which are managed separately.
 func (c *Connector) DeleteAgentJob(ctx context.Context, jobID string) error {
 	return c.agentExec(ctx,
 		`IF EXISTS (SELECT 1 FROM [msdb].[dbo].[sysjobs] WHERE [job_id] = TRY_CONVERT(uniqueidentifier, @jobId))

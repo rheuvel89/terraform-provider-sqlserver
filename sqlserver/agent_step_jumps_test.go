@@ -1,8 +1,10 @@
 package sqlserver
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"terraform-provider-sqlserver/sqlserver/model"
 	"testing"
 )
@@ -219,5 +221,55 @@ func TestAgentStepFlags(t *testing.T) {
 	}
 	if got := agentStepFlagsFromData(data); got != 12 {
 		t.Fatalf("log_to_table + include_step_output_in_history: got flags %d, want 12", got)
+	}
+}
+
+func TestAgentPlanRegistryKeys(t *testing.T) {
+	r := newAgentPlanRegistry()
+	if err := r.claimFollows("8f1c2a2e-1111-4a4a-9b9b-0123456789ab", "job", "a", "b"); err != nil {
+		t.Fatal(err)
+	}
+	// Job IDs are compared case-insensitively: msdb returns them in upper case, a config can hold either.
+	if err := r.claimFollows("8F1C2A2E-1111-4A4A-9B9B-0123456789AB", "job", "a", "c"); err == nil {
+		t.Fatal("the same job in another case should clash")
+	}
+	// The same previous step name in another job is a different claim.
+	if err := r.claimFollows("00000000-0000-0000-0000-000000000000", "other", "a", "c"); err != nil {
+		t.Fatalf("claims of different jobs don't clash: %v", err)
+	}
+	// A step can follow one step and handle the outcome of the same step: different kinds of claim.
+	if err := r.claimHandles("8F1C2A2E-1111-4A4A-9B9B-0123456789AB", "job", agentOutcomeFailure, "a", "b"); err != nil {
+		t.Fatalf("a follows claim and a handles claim don't clash: %v", err)
+	}
+	// A new registry, as each Terraform command gets one, starts empty.
+	if err := newAgentPlanRegistry().claimFollows("8f1c2a2e-1111-4a4a-9b9b-0123456789ab", "job", "a", "c"); err != nil {
+		t.Fatalf("a new registry should hold no claims: %v", err)
+	}
+}
+
+func TestAgentPlanRegistryConcurrent(t *testing.T) {
+	// Terraform plans resources in parallel. Run with -race to check the locking; whatever the order, exactly one of
+	// the steps claiming the same previous step wins and every other one gets an error.
+	r := newAgentPlanRegistry()
+	const claimants = 50
+	errs := make(chan error, claimants)
+	var wg sync.WaitGroup
+	for i := 0; i < claimants; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- r.claimFollows("JOB", "job", "a", fmt.Sprintf("step%d", i))
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	failed := 0
+	for err := range errs {
+		if err != nil {
+			failed++
+		}
+	}
+	if failed != claimants-1 {
+		t.Fatalf("%d of %d claims failed, want %d", failed, claimants, claimants-1)
 	}
 }
