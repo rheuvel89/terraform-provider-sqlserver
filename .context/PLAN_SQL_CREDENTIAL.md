@@ -41,7 +41,7 @@ resource "sqlserver_credential" "backup" {
 | `identity` | Required, ForceNew | Only `"Managed Identity"` for now (case-insensitive match, stored as written). |
 | `credential_id` | Computed | `sys.credentials.credential_id`. |
 
-- **Create:** `CREATE CREDENTIAL` built in T-SQL with `QUOTENAME(@name)`; the identity is the fixed literal `'Managed Identity'`, so no user text is quoted into the statement apart from the name.
+- **Create:** `CREATE CREDENTIAL` built in T-SQL with `QUOTENAME(@name)` for the name and `REPLACE(@identity, '''', '''''')` for the identity, which is written as configured (validation already limits it to "Managed Identity" in any case, so it holds no quotes).
 - **Read:** `SELECT credential_id, credential_identity FROM sys.credentials WHERE name = @name`. Not found → clear the ID. A different `credential_identity` (changed outside Terraform) shows as a diff and replaces the credential.
 - **Delete:** `IF EXISTS ... DROP CREDENTIAL`. SQL Server refuses while a SQL Server Agent proxy or a login uses the credential; that error is passed through with the credential name.
 - **No secrets in this version.** For later: `ALTER CREDENTIAL` without `SECRET` deletes the stored secret (spike C3), and secrets longer than 128 characters can't be quoted with `QUOTENAME(@x, '''')`, which returns NULL. Both matter as soon as secrets are added.
