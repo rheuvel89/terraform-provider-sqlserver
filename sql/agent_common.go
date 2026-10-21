@@ -18,19 +18,23 @@ const (
 // which has no SQL Server Agent and no server-level credentials.
 const engineEditionAzureSQLDatabase = 5
 
+// engineEditionManagedInstance is the SERVERPROPERTY('EngineEdition') value of Azure SQL Managed Instance.
+const engineEditionManagedInstance = 8
+
 // EnsureAgentAvailable returns a clear error when the server has no SQL Server Agent.
 func (c *Connector) EnsureAgentAvailable(ctx context.Context) error {
 	return c.ensureNotAzureSQLDatabase(ctx, "SQL Server Agent is not available on Azure SQL Database; agent resources need SQL Server (on-premises or VM) or Azure SQL Managed Instance")
 }
 
+// IsManagedInstance reports whether the server is Azure SQL Managed Instance.
+func (c *Connector) IsManagedInstance(ctx context.Context) (bool, error) {
+	edition, err := c.engineEdition(ctx)
+	return edition == engineEditionManagedInstance, err
+}
+
 // ensureNotAzureSQLDatabase returns an error with the given message when the server is Azure SQL Database.
 func (c *Connector) ensureNotAzureSQLDatabase(ctx context.Context, message string) error {
-	var edition int
-	err := c.QueryRowContext(ctx, `SELECT CAST(SERVERPROPERTY('EngineEdition') AS int)`,
-		func(r *sql.Row) error {
-			return r.Scan(&edition)
-		},
-	)
+	edition, err := c.engineEdition(ctx)
 	if err != nil {
 		return err
 	}
@@ -38,6 +42,16 @@ func (c *Connector) ensureNotAzureSQLDatabase(ctx context.Context, message strin
 		return errors.New(message)
 	}
 	return nil
+}
+
+func (c *Connector) engineEdition(ctx context.Context) (int, error) {
+	var edition int
+	err := c.QueryRowContext(ctx, `SELECT CAST(SERVERPROPERTY('EngineEdition') AS int)`,
+		func(r *sql.Row) error {
+			return r.Scan(&edition)
+		},
+	)
+	return edition, err
 }
 
 // nullIfEmpty passes an empty string to a stored procedure as NULL, which the msdb

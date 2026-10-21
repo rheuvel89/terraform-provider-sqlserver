@@ -48,7 +48,8 @@ Mail is sent by Database Mail, which has to be set up separately; see
   Changing the owner needs sysadmin. The owner decides who the steps run as: see
   [`sqlserver_agent_job_step`](agent_job_step.md#who-a-step-runs-as).
 * `notify_level_eventlog` - (Optional) When to write the job outcome to the Windows application log: `never`,
-  `on_success`, `on_failure` or `always`. Default is `on_failure`.
+  `on_success`, `on_failure` or `always`. Default is `on_failure`. Azure SQL Managed Instance has no Windows
+  application log and always stores `never`; there the provider keeps the configured value, so it never shows drift.
 * `notify_level_email` - (Optional) When to email `notify_email_operator_name`: `never`, `on_success`, `on_failure`
   or `always`. Default is `never`.
 * `notify_email_operator_name` - (Optional) The name of the operator to email. Required when `notify_level_email` isn't

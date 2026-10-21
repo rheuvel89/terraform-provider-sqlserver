@@ -13,6 +13,7 @@ import (
 
 type AgentJobConnector interface {
 	EnsureAgentAvailable(ctx context.Context) error
+	IsManagedInstance(ctx context.Context) (bool, error)
 	GetAgentJob(ctx context.Context, jobID string) (*model.AgentJob, error)
 	CreateAgentJob(ctx context.Context, job *model.AgentJob) (string, error)
 	UpdateAgentJob(ctx context.Context, job *model.AgentJob) error
@@ -175,13 +176,26 @@ func resourceAgentJobRead(ctx context.Context, data *schema.ResourceData, meta i
 		return nil
 	}
 
+	eventlog := enumName(agentNotifyLevels, job.NotifyLevelEventlog)
+	if job.NotifyLevelEventlog == 0 && data.Get(agentNotifyEventlog).(string) != eventlog {
+		// Managed Instance has no Windows application log and stores 0 whatever level is set.
+		// Keep the configured level there, or every plan would try to set it again.
+		mi, err := connector.IsManagedInstance(ctx)
+		if err != nil {
+			return diag.FromErr(err)
+		}
+		if mi {
+			eventlog = data.Get(agentNotifyEventlog).(string)
+		}
+	}
+
 	values := map[string]interface{}{
 		agentNameProp:          job.Name,
 		agentDescriptionProp:   job.Description,
 		agentEnabledProp:       job.Enabled,
 		agentCategoryNameProp:  job.CategoryName,
 		agentOwnerLoginProp:    job.OwnerLoginName,
-		agentNotifyEventlog:    enumName(agentNotifyLevels, job.NotifyLevelEventlog),
+		agentNotifyEventlog:    eventlog,
 		agentNotifyEmail:       enumName(agentNotifyLevels, job.NotifyLevelEmail),
 		agentNotifyEmailOpProp: job.NotifyEmailOperatorName,
 		agentDeleteLevelProp:   enumName(agentNotifyLevels, job.DeleteLevel),
